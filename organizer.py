@@ -8,6 +8,8 @@ import sys
 import os
 import time
 import threading
+import shutil
+from queue import Queue
 
 FileState = namedtuple('FileState', ['last_size', 'last_seen_ts'])
 
@@ -20,11 +22,12 @@ CATEGORIES = {
     "Docs": {".pdf", ".doc", ".docx", ".txt", ".md", ".rtf"},
 }
 DEST_DIRS = {
-    "Archives": r"D:\\organizer\\Archives",
-    "Installers": r"D:\\organizer\\Installers",
-    "Docs": r"D:\\organizer\\Docs",
+    "Archives": r"D:\repos\organizer\demo\archives",
+    "Installers": r"D:\repos\organizer\demo\installers",
+    "Docs": r"D:\repos\organizer\demo\docs",
 }
 
+exec_q = Queue()
 class MyHandler(FileSystemEventHandler):
     def __init__(self, curr_files: dict, lock: threading.Lock):
         self.curr_files = curr_files
@@ -149,7 +152,7 @@ def on_finalize_cb(path: str):
     match op:
         case "skip":
             logger.info(f"planned skip: {path} ({reason})")
-            return ("skip", name, reason)
+            return (op, name, reason)
         
         case "move":
             dst_dir = DEST_DIRS.get(category)
@@ -158,22 +161,57 @@ def on_finalize_cb(path: str):
                 return ("skip", None, f"unconfigured_category:{category}")
             
             abs_dest = os.path.join(dst_dir, name)
-            logger.success(f"planned move: {path} -> {abs_dest} ({reason})")
-            ok = execute(op, path, abs_dest, dry_run=True)
-            if ok:
-                logger.success(f"executed: {path} -> {abs_dest}")
-                return ("move", abs_dest, reason)
-            else:
-                logger.error(f"failed: {path} -> {abs_dest}")
-                return ("skip", None, "execute_failed")
-            
+            logger.info(f"planned move: {path} -> {abs_dest} ({reason})")
+            exec_q.put((path, abs_dest))
+            return (op, abs_dest, reason)
+        
         case _:
             logger.error(f"unknown operation: {op}")
             return ("skip", None, f"unknown operation: {op}")
 
+def exec_worker(dry_run: bool):
+    while True:
+        src, abs_dest = exec_q.get()
+        try:
+            ok = execute("move", src, abs_dest, dry_run=dry_run)
+            if ok:
+                logger.success(f"executed: {src} -> {abs_dest}")
+            else:
+                logger.error(f"failed: {src} -> {abs_dest}")
+        finally:
+            exec_q.task_done()
+
+def next_available(path: str) -> str:
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    n = 2
+    while True:
+        cand = f"{base} ({n}){ext}"
+        if not os.path.exists(cand):
+            return cand
+        n += 1
 
 def execute(op: str, src: str, dst: str, *, dry_run: bool, retries: int=3, backoff_ms: int =200) -> bool:
-    pass
+    final = next_available(dst)
+    if dry_run:
+        logger.info(f"DRY-RUN move: {src} -> {final}")
+        return True
+    
+    os.makedirs(os.path.dirname(final), exist_ok=True)
+
+    for attempt in range(1, retries+2):
+        try:
+            shutil.move(src, final)
+            logger.debug(f"moved on attempt {attempt} -> {final}")
+            return True
+        except (PermissionError, OSError) as e:
+            retryable = isinstance(e, PermissionError) or getattr(e, "winerror", 0) in (32, 33)
+            if retryable and attempt <= retries:
+                time.sleep(0.2*attempt) # linear backoff
+                continue
+            logger.error(f"move failed after {attempt} attempts: {e}")
+            return False
 
 def main(argv=None):
     curr_files = {}
@@ -187,6 +225,8 @@ def main(argv=None):
     observer.schedule(handler, dir, recursive=False)
     observer.start()
     logger.info(f"watching {dir}")
+
+    threading.Thread(target=exec_worker, args=(dry_run,), daemon=True).start()
     
     stop = threading.Event()
     try:
@@ -194,7 +234,7 @@ def main(argv=None):
                        lock=lock,
                        on_finalize=on_finalize_cb,
                        stop_event=stop,
-                       )            
+                       )          
     except KeyboardInterrupt:
         observer.stop()
         stop.set()
