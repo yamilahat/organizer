@@ -34,14 +34,12 @@ class MyHandler(FileSystemEventHandler):
         self.lock = lock
     def on_created(self, event):
         if event.is_directory: return
-        logger.info(f"file created: {event.src_path}")
+        logger.debug(f"file created: {event.src_path}")
         path = os.path.normcase(os.path.abspath(event.src_path))
 
         with self.lock:
             if path not in self.curr_files:
                 self.curr_files[path] = FileState(-1, time.monotonic())
-            else:
-                pass
     def on_moved(self, event):
         if event.is_directory: return
         now = time.monotonic()
@@ -57,13 +55,9 @@ class MyHandler(FileSystemEventHandler):
 def configure_logger(verbose: bool) -> None:
     logger.remove()
     
-    if verbose:
-        fmt = (
-            "<green>{time:HH:mm:ss}</green> | <level>{level: <7}</level> | "
-            "{name}:{function}:{line} | {message}"
-        )
-    else:
-        fmt = "<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}"
+    fmt = ("<green>{time:HH:mm:ss}</green> | <level>{level: <7}</level> | "
+          "{name}:{function}:{line} | {message}") if verbose \
+         else "<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}"
 
     logger.add(
         sys.stderr,
@@ -139,11 +133,11 @@ def decide_action(file_path: str) -> tuple[str, str, str, str]:
     if file_name.startswith(".") or file_name.lower().endswith(TEMP_SUFFIXES):
         return ("skip", None, None, "temporary_or_hidden")
     if file_ext in CATEGORIES["Archives"]:
-        return ("move", "Archived", file_name, "rule:archives")
+        return ("move", "archives", file_name, "rule:archives")
     if file_ext in CATEGORIES["Docs"]:
-        return ("move", "Docs", file_name, "rule:docs")
+        return ("move", "docs", file_name, "rule:docs")
     if file_ext in CATEGORIES["Installers"]:
-        return ("move", "Installers", file_name, "rule:installers")
+        return ("move", "installers", file_name, "rule:installers")
     return ("skip", None, None, "no_rule")
 
 def on_finalize_cb(path: str):
@@ -218,13 +212,15 @@ def main(argv=None):
     lock = threading.Lock()
 
     dir, dry_run, verbose = extract_args(argv)
+    dir = os.path.normcase(os.path.abspath(dir))
     configure_logger(verbose=verbose)
 
     observer = Observer()
     handler = MyHandler(curr_files, lock)
     observer.schedule(handler, dir, recursive=False)
     observer.start()
-    logger.info(f"watching {dir}")
+    logger.info("config: dry_run={} verbose={} dests={}", dry_run, verbose, DEST_DIRS)
+
 
     threading.Thread(target=exec_worker, args=(dry_run,), daemon=True).start()
     
