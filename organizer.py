@@ -19,6 +19,12 @@ CATEGORIES = {
     "Installers": {".exe", ".msi", ".msix", ".msixbundle"},
     "Docs": {".pdf", ".doc", ".docx", ".txt", ".md", ".rtf"},
 }
+DEST_DIRS = {
+    "Archives": r"D:\\organizer\\Archives",
+    "Installers": r"D:\\organizer\\Installers",
+    "Docs": r"D:\\organizer\\Docs",
+}
+
 class MyHandler(FileSystemEventHandler):
     def __init__(self, curr_files: dict, lock: threading.Lock):
         self.curr_files = curr_files
@@ -45,6 +51,26 @@ class MyHandler(FileSystemEventHandler):
             self.curr_files[dst] = FileState(state.last_size, now)
         logger.debug(f"moved {src} -> {dst}")
 
+def configure_logger(verbose: bool) -> None:
+    logger.remove()
+    
+    if verbose:
+        fmt = (
+            "<green>{time:HH:mm:ss}</green> | <level>{level: <7}</level> | "
+            "{name}:{function}:{line} | {message}"
+        )
+    else:
+        fmt = "<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}"
+
+    logger.add(
+        sys.stderr,
+        level="DEBUG" if verbose else "INFO",
+        backtrace=verbose,
+        diagnose=verbose,
+        format=fmt,
+    )          
+    logger.info("logger ready")
+
 def extract_args(argv) -> tuple[str, bool, bool]:
     p = argparse.ArgumentParser(prog="organizer", description="Downloads organizer (MVP)")
     p.add_argument("--watch", help="Directory to watch", required=True)
@@ -52,11 +78,6 @@ def extract_args(argv) -> tuple[str, bool, bool]:
     p.add_argument("--verbose", action="store_true", help="Enable DEBUG logs and diagnostics")
     args = p.parse_args(argv)
     return (args.watch, args.dry_run, args.verbose)
-
-def on_finalize_cb(path: str):
-    op, rel_dest, reason = decide_action(path)
-    logger.info("planned: {} -> {} ({})", path, rel_dest or "-", reason)
-    return op, rel_dest, reason
 
 def run_stabilizer(
     curr_files: dict[str, FileState],
@@ -109,30 +130,51 @@ def run_stabilizer(
         
         time.sleep(POLL_INTERVAL)
 
-def configure_logger(verbose: bool) -> None:
-    logger.remove()
-    logger.add(
-        sys.stderr,
-        level="DEBUG" if verbose else "INFO",
-        backtrace=verbose,
-        diagnose=verbose,
-        format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}",
-    )          
-    logger.info("logger ready")
-
-def decide_action(file_path: str) -> tuple[str, str, str]:
+def decide_action(file_path: str) -> tuple[str, str, str, str]:
     file_name = os.path.basename(file_path)
     file_ext = os.path.splitext(file_name)[1].lower()
     if file_name.startswith(".") or file_name.lower().endswith(TEMP_SUFFIXES):
-        return ("skip", None, "temporary_or_hidden")
+        return ("skip", None, None, "temporary_or_hidden")
     if file_ext in CATEGORIES["Archives"]:
-        return ("move", os.path.join("Archives", file_name), "rule:archives")
+        return ("move", "Archived", file_name, "rule:archives")
     if file_ext in CATEGORIES["Docs"]:
-        return ("move", os.path.join("Docs", file_name), "rule:docs")
+        return ("move", "Docs", file_name, "rule:docs")
     if file_ext in CATEGORIES["Installers"]:
-        return ("move", os.path.join("Installers", file_name), "rule:installers")
-    return ("skip", None, "no_rule")
+        return ("move", "Installers", file_name, "rule:installers")
+    return ("skip", None, None, "no_rule")
+
+def on_finalize_cb(path: str):
+    op, category, name, reason = decide_action(path)
+
+    match op:
+        case "skip":
+            logger.info(f"planned skip: {path} ({reason})")
+            return ("skip", name, reason)
         
+        case "move":
+            dst_dir = DEST_DIRS.get(category)
+            if not dst_dir:
+                logger.warning(f"skip: category {category} not configured for {path}")
+                return ("skip", None, f"unconfigured_category:{category}")
+            
+            abs_dest = os.path.join(dst_dir, name)
+            logger.success(f"planned move: {path} -> {abs_dest} ({reason})")
+            ok = execute(op, path, abs_dest, dry_run=True)
+            if ok:
+                logger.success(f"executed: {path} -> {abs_dest}")
+                return ("move", abs_dest, reason)
+            else:
+                logger.error(f"failed: {path} -> {abs_dest}")
+                return ("skip", None, "execute_failed")
+            
+        case _:
+            logger.error(f"unknown operation: {op}")
+            return ("skip", None, f"unknown operation: {op}")
+
+
+def execute(op: str, src: str, dst: str, *, dry_run: bool, retries: int=3, backoff_ms: int =200) -> bool:
+    pass
+
 def main(argv=None):
     curr_files = {}
     lock = threading.Lock()
