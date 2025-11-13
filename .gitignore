@@ -7,7 +7,7 @@ __pycache__/
 *.so
 
 # Testing Directories
-/demo_downloads/
+demo/
 
 # Distribution / packaging
 .Python
