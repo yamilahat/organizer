@@ -13,7 +13,12 @@ FileState = namedtuple('FileState', ['last_size', 'last_seen_ts'])
 
 POLL_INTERVAL = 0.5
 STABILIZE_SECONDS = 3
-TEMP_SUFFIXES = {".crdownload", ".tmp", ".part"}
+TEMP_SUFFIXES = (".crdownload", ".tmp", ".part")
+CATEGORIES = {
+    "Archives": {".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz"},
+    "Installers": {".exe", ".msi", ".msix", ".msixbundle"},
+    "Docs": {".pdf", ".doc", ".docx", ".txt", ".md", ".rtf"},
+}
 class MyHandler(FileSystemEventHandler):
     def __init__(self, curr_files: dict, lock: threading.Lock):
         self.curr_files = curr_files
@@ -28,10 +33,6 @@ class MyHandler(FileSystemEventHandler):
                 self.curr_files[path] = FileState(-1, time.monotonic())
             else:
                 pass
-        return super().on_created(event)
-    def on_modified(self, event):
-        # logger.debug(f"file modified: {event.src_path}")
-        return super().on_modified(event)
     def on_moved(self, event):
         if event.is_directory: return
         now = time.monotonic()
@@ -52,10 +53,15 @@ def extract_args(argv) -> tuple[str, bool, bool]:
     args = p.parse_args(argv)
     return (args.watch, args.dry_run, args.verbose)
 
+def on_finalize_cb(path: str):
+    op, rel_dest, reason = decide_action(path)
+    logger.info("planned: {} -> {} ({})", path, rel_dest or "-", reason)
+    return op, rel_dest, reason
+
 def run_stabilizer(
     curr_files: dict[str, FileState],
     lock: threading.Lock,
-    on_finalize: Callable[[str], None],
+    on_finalize: Callable[[str], tuple[str, str, str]],
     stop_event: threading.Event,
 ) -> None:
     while not stop_event.is_set():
@@ -98,6 +104,7 @@ def run_stabilizer(
                 curr_files.pop(p, None)
 
         for p in to_finalize:
+            logger.success(f"finalized {p}")
             on_finalize(p)
         
         time.sleep(POLL_INTERVAL)
@@ -113,6 +120,19 @@ def configure_logger(verbose: bool) -> None:
     )          
     logger.info("logger ready")
 
+def decide_action(file_path: str) -> tuple[str, str, str]:
+    file_name = os.path.basename(file_path)
+    file_ext = os.path.splitext(file_name)[1].lower()
+    if file_name.startswith(".") or file_name.lower().endswith(TEMP_SUFFIXES):
+        return ("skip", None, "temporary_or_hidden")
+    if file_ext in CATEGORIES["Archives"]:
+        return ("move", os.path.join("Archives", file_name), "rule:archives")
+    if file_ext in CATEGORIES["Docs"]:
+        return ("move", os.path.join("Docs", file_name), "rule:docs")
+    if file_ext in CATEGORIES["Installers"]:
+        return ("move", os.path.join("Installers", file_name), "rule:installers")
+    return ("skip", None, "no_rule")
+        
 def main(argv=None):
     curr_files = {}
     lock = threading.Lock()
@@ -130,7 +150,7 @@ def main(argv=None):
     try:
         run_stabilizer(curr_files=curr_files,
                        lock=lock,
-                       on_finalize=lambda p: logger.success(f"finalized {p}"),
+                       on_finalize=on_finalize_cb,
                        stop_event=stop,
                        )            
     except KeyboardInterrupt:
