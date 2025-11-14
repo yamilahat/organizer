@@ -13,17 +13,12 @@ from queue import Queue
 import uuid
 from datetime import datetime, timezone
 import json
+from planner import decide_action, TEMP_SUFFIXES
 
 FileState = namedtuple('FileState', ['last_size', 'last_seen_ts'])
 
 POLL_INTERVAL = 0.5
 STABILIZE_SECONDS = 3
-TEMP_SUFFIXES = (".crdownload", ".tmp", ".part")
-CATEGORIES = {
-    "Archives": {".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz"},
-    "Installers": {".exe", ".msi", ".msix", ".msixbundle"},
-    "Docs": {".pdf", ".doc", ".docx", ".txt", ".md", ".rtf"},
-}
 JOURNAL_PATH = os.path.join(os.environ.get("LOCALAPPDATA", "."), "Organizer", "journal.ndjson")
 SESSION_ID = str(uuid.uuid4()) 
 VERSION = "0.1.0"
@@ -75,9 +70,12 @@ def load_config(config_path: str|None = None) -> dict:
         "archives": r"D:\repos\organizer\demo\archives",
         "installers": r"D:\repos\organizer\demo\installers",
         "docs": r"D:\repos\organizer\demo\docs",
-        } # will add more configurations later
-    }
+                },
+                "rules": []
+                # will add more configurations later
+            }
     path = config_path or os.path.join(os.environ.get("LOCALAPPDATA", "."), "Organizer", "config.json")
+    
     try:
         with open(path, 'r', encoding='utf-8') as f:
             cfg = json.load(f)
@@ -86,10 +84,13 @@ def load_config(config_path: str|None = None) -> dict:
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(defaults, f, indent=2)
         cfg = defaults
+        
+    # normalize dest dirs and rules
     dest_dirs = {
         k: os.path.normcase(os.path.abspath(v))
         for k, v in cfg.get("dest_dirs", {}).items()
     }
+    
     return {"path": path, "dest_dirs":dest_dirs}
     
 def journal(event: str, **fields) -> None:
@@ -178,26 +179,13 @@ def run_stabilizer(
         
         time.sleep(POLL_INTERVAL)
 
-def decide_action(file_path: str) -> tuple[str, str, str, str]:
-    file_name = os.path.basename(file_path)
-    file_ext = os.path.splitext(file_name)[1].lower()
-    if file_name.startswith(".") or file_name.lower().endswith(TEMP_SUFFIXES):
-        return ("skip", None, None, "temporary_or_hidden")
-    if file_ext in CATEGORIES["Archives"]:
-        return ("move", "archives", file_name, "rule:archives")
-    if file_ext in CATEGORIES["Docs"]:
-        return ("move", "docs", file_name, "rule:docs")
-    if file_ext in CATEGORIES["Installers"]:
-        return ("move", "installers", file_name, "rule:installers")
-    return ("skip", None, None, "no_rule")
-
 def on_finalize_cb(path: str):
-    op, category, name, reason = decide_action(path)
-
+    op, category, base, reason = decide_action(path, CONFIG.get("rules", []))
+    print(CONFIG.get("rules", []))
     match op:
         case "skip":
             logger.info(f"planned skip: {path} ({reason})")
-            return (op, name, reason)
+            return (op, base, reason)
         
         case "move":
             dst_dir = CONFIG["dest_dirs"].get(category)
@@ -205,7 +193,7 @@ def on_finalize_cb(path: str):
                 logger.warning(f"skip: category {category} not configured for {path}")
                 return ("skip", None, f"unconfigured_category:{category}")
             
-            abs_dest = os.path.join(dst_dir, name)
+            abs_dest = os.path.join(dst_dir, base)
             logger.info(f"planned move: {path} -> {abs_dest} ({reason})")
             journal("planned", src=path, dest=abs_dest, op=op, reason=reason, category=category)
             exec_q.put((path, abs_dest))
@@ -295,7 +283,6 @@ def main(argv=None):
         observer.stop()
         stop.set()
     observer.join()
-
 
 if __name__ == "__main__":
     main()
