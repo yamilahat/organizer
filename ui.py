@@ -132,7 +132,7 @@ def main():
     watch_root_initial = raw.get("watch_root") or default_downloads
 
     # Window
-    root = tb.Window(themename="flatly")  # try "darkly" for dark mode
+    root = tb.Window(themename="superhero")  # try "darkly" for dark mode
     root.title("Organizer — Setup")
     root.geometry("1040x760")     # a little longer/taller
     root.minsize(940, 680)
