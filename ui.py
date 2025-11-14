@@ -12,7 +12,7 @@ import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 
 from organizer import load_config, JOURNAL_PATH  # reuse existing helpers
-
+from notifications import send_notification
 
 # ---------------------------- Small utilities ----------------------------
 
@@ -474,15 +474,25 @@ def main():
     background_var = tk.BooleanVar(master=root, value=True)
     ttk.Checkbutton(bottom, text="Run watcher in background", variable=background_var).pack(side="left", padx=10)
 
+    raw = read_raw_config(cfg_path)
+    notify_var = tk.BooleanVar(value=bool(raw.get("notify", False)))
+    ttk.Checkbutton(bottom, text="Show notifications", variable=notify_var).pack(side="left", padx=6)
+
+    
+    
+
     def gather_config() -> dict:
-        # Destinations
-        dests = {}
-        for iid in dest_tree.get_children(""):
-            cat, folder = dest_tree.item(iid, "values")
-            dests[str(cat).strip().lower()] = str(folder).strip()
-        # Rules
-        r_rows = [rule_tree.item(i, "values") for i in rule_tree.get_children("")]
-        return {"watch_root": watch_var.get().strip(), "dest_dirs": dests, "rules": rows_to_rules(r_rows)}
+      dests = {}
+      for iid in dest_tree.get_children(""):
+          cat, folder = dest_tree.item(iid, "values")
+          dests[str(cat).strip().lower()] = str(folder).strip()
+      r_rows = [rule_tree.item(i, "values") for i in rule_tree.get_children("")]
+      return {
+          "watch_root": watch_var.get().strip(),
+          "dest_dirs": dests,
+          "rules": rows_to_rules(r_rows),
+          "notify": bool(notify_var.get()),   # NEW
+      }
 
     def reload_cfg():
         nonlocal cfg, dest_dirs, rules
@@ -491,6 +501,7 @@ def main():
         rules = cfg.get("rules", [])
         raw2 = read_raw_config(cfg["path"])
         watch_var.set(raw2.get("watch_root", watch_var.get()))
+        notify_var.set(bool(raw2.get("notify", notify_var.get())))
         # refresh tables
         for iid in dest_tree.get_children(""):
             dest_tree.delete(iid)
@@ -500,7 +511,8 @@ def main():
             rule_tree.delete(iid)
         for row in rules_to_rows(rules):
             rule_tree.insert("", "end", values=row)
-        messagebox.showinfo("Reloaded", "Configuration reloaded from disk.")
+        # messagebox.showinfo("Reloaded", "Configuration reloaded from disk.")
+        send_notification("Reloaded", "Configuration reloaded from disk.")
         _on_content_configure()
 
     ttk.Button(bottom, text="Reload", command=reload_cfg, bootstyle=SECONDARY).pack(side="left", padx=6)
@@ -516,7 +528,8 @@ def main():
     def start_watcher():
         rec = read_pidfile()
         if rec and is_pid_running(rec.get("pid", -1)):
-            messagebox.showinfo("Watcher", f"Already running (PID {rec['pid']})."); update_status(); return
+            # messagebox.showinfo("Watcher", f"Already running (PID {rec['pid']})."); update_status(); return
+            send_notification("Organizer 🦸", f"Already running (PID {rec['pid']})."); update_status(); return
 
         root_dir = watch_var.get().strip()
         if not root_dir:
@@ -536,12 +549,14 @@ def main():
             flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
 
         cmd = [exe, script, "--watch", root_dir]
+        if bool(notify_var.get()): cmd.append("--notify")
         try:
             out = subprocess.DEVNULL if background_var.get() else None
             err = subprocess.DEVNULL if background_var.get() else None
             proc = subprocess.Popen(cmd, creationflags=flags, stdout=out, stderr=err, close_fds=True)
             write_pidfile(proc.pid, root_dir)
-            messagebox.showinfo("Watcher", f"Started (PID {proc.pid}).")
+            send_notification("Organizer 🦸", f"Started (PID {proc.pid}).")
+            # messagebox.showinfo("Watcher", f"Started (PID {proc.pid}).")
         except Exception as e:
             messagebox.showerror("Watcher", f"Failed to start: {e}")
         finally:
@@ -550,18 +565,22 @@ def main():
     def stop_watcher():
         rec = read_pidfile()
         if not rec:
-            messagebox.showinfo("Watcher", "Not running (no PID file)."); update_status(); return
+            send_notification("Organizer 🦸", "Not running"); update_status(); return
+            # messagebox.showinfo("Watcher", "Not running (no PID file)."); update_status(); return
+            
         pid = int(rec.get("pid", -1))
         if pid < 0 or not is_pid_running(pid):
             remove_pidfile()
-            messagebox.showinfo("Watcher", "Not running."); update_status(); return
+            send_notification("Organizer 🦸", "Not running"); update_status(); return
+            # messagebox.showinfo("Watcher", "Not running."); update_status(); return
         try:
             subprocess.run(["taskkill", "/PID", str(pid), "/T"], check=False, capture_output=True)
             if is_pid_running(pid):
                 subprocess.run(["taskkill", "/F", "/PID", str(pid), "/T"], check=False, capture_output=True)
             if not is_pid_running(pid):
                 remove_pidfile()
-                messagebox.showinfo("Watcher", "Stopped.")
+                # messagebox.showinfo("Watcher", "Stopped.")
+                send_notification("Organizer 🦸", "Stopped")
             else:
                 messagebox.showwarning("Watcher", "Failed to stop watcher.")
         except Exception as e:
@@ -591,9 +610,11 @@ def main():
             if messagebox.askyesno("Config saved", "Restart watcher now to apply changes?"):
                 restart_watcher()
             else:
-                messagebox.showinfo("Watcher", "Changes will apply on next restart.")
+                # messagebox.showinfo("Watcher", "Changes will apply on next restart.")
+                send_notification("Organizer 🦸", "Changes will apply on next restart.")
         else:
-            messagebox.showinfo("Saved", "Configuration saved.")
+            # messagebox.showinfo("Saved", "Configuration saved.")
+            send_notification("Saved", "Configuration saved.")
         update_status()
 
     ttk.Button(bottom, text="Start Watcher", command=start_watcher, bootstyle=SUCCESS).pack(side="right")

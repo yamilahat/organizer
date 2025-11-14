@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime, timezone
 import json
 from planner import decide_action, TEMP_SUFFIXES
+from notifications import send_notification
 
 FileState = namedtuple('FileState', ['last_size', 'last_seen_ts'])
 
@@ -25,6 +26,7 @@ VERSION = "0.1.0"
 CONFIG: dict | None = None
 
 exec_q = Queue()
+
 class MyHandler(FileSystemEventHandler):
     def __init__(self, curr_files: dict, lock: threading.Lock):
         self.curr_files = curr_files
@@ -120,13 +122,14 @@ def maybe_rotate_journal(max_bytes: int = 10_000_000) -> None:
     except Exception as e:
         logger.warning(f"journal rotate failed: {e}")
 
-def extract_args(argv) -> tuple[str, bool, bool]:
+def extract_args(argv) -> tuple[str, bool, bool, bool]:
     p = argparse.ArgumentParser(prog="organizer", description="Downloads organizer (MVP)")
     p.add_argument("--watch", help="Directory to watch", required=True)
     p.add_argument("--dry-run", action="store_true", help="Plan actions only")
     p.add_argument("--verbose", action="store_true", help="Enable DEBUG logs and diagnostics")
+    p.add_argument("--notify", action="store_true", help="Show a Windows toast when a file is moved")
     args = p.parse_args(argv)
-    return (args.watch, args.dry_run, args.verbose)
+    return (args.watch, args.dry_run, args.verbose, args.notify)
 
 def run_stabilizer(
     curr_files: dict[str, FileState],
@@ -202,7 +205,7 @@ def on_finalize_cb(path: str):
             logger.error(f"unknown operation: {op}")
             return ("skip", None, f"unknown operation: {op}")
 
-def exec_worker(dry_run: bool):
+def exec_worker(dry_run: bool, notify: bool):
     while True:
         src, abs_dest = exec_q.get()
         try:
@@ -210,9 +213,11 @@ def exec_worker(dry_run: bool):
             if ok:
                 logger.success(f"executed: {src} -> {abs_dest}")
                 journal("executed", src=src, dest=abs_dest, op="move", reason="ok")
+                send_notification("Organizer 🦸", f"Moved {os.path.basename(src)} to {abs_dest}", enable=notify, path=abs_dest)
             else:
                 logger.error(f"failed: {src} -> {abs_dest}")
                 journal("failed", src=src, dest=abs_dest, op="move", reason="executed_failed")
+                send_notification("Organizer 🦸👎", f"Failed to move {os.path.basename(src)}", enable=notify, path=src)
         finally:
             exec_q.task_done()
 
@@ -254,13 +259,13 @@ def main(argv=None):
     curr_files = {}
     lock = threading.Lock()
 
-    dir, dry_run, verbose = extract_args(argv)
+    dir, dry_run, verbose, notify = extract_args(argv)
     dir = os.path.normcase(os.path.abspath(dir))
     
     configure_logger(verbose=verbose)
     
     CONFIG = load_config()
-    logger.info(f"config: dryrun={dry_run}, verbose={verbose} {CONFIG["path"]} | dest_dir={CONFIG["dest_dirs"]} | rules={CONFIG["rules"]}")
+    logger.info(f"config: dryrun={dry_run}, verbose={verbose}, notify={notify}, {CONFIG["path"]} | ")
     
     maybe_rotate_journal()
 
@@ -269,7 +274,7 @@ def main(argv=None):
     observer.schedule(handler, dir, recursive=False)
     observer.start()
 
-    threading.Thread(target=exec_worker, args=(dry_run,), daemon=True).start()
+    threading.Thread(target=exec_worker, args=(dry_run,notify,), daemon=True).start()
     
     stop = threading.Event()
     try:
