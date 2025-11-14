@@ -24,14 +24,10 @@ CATEGORIES = {
     "Installers": {".exe", ".msi", ".msix", ".msixbundle"},
     "Docs": {".pdf", ".doc", ".docx", ".txt", ".md", ".rtf"},
 }
-DEST_DIRS = {
-    "archives": r"D:\repos\organizer\demo\archives",
-    "installers": r"D:\repos\organizer\demo\installers",
-    "docs": r"D:\repos\organizer\demo\docs",
-}
 JOURNAL_PATH = os.path.join(os.environ.get("LOCALAPPDATA", "."), "Organizer", "journal.ndjson")
 SESSION_ID = str(uuid.uuid4()) 
 VERSION = "0.1.0"
+CONFIG: dict | None = None
 
 exec_q = Queue()
 class MyHandler(FileSystemEventHandler):
@@ -74,6 +70,28 @@ def configure_logger(verbose: bool) -> None:
     )          
     logger.info("logger ready")
 
+def load_config(config_path: str|None = None) -> dict:
+    defaults = {"dest_dirs": {
+        "archives": r"D:\repos\organizer\demo\archives",
+        "installers": r"D:\repos\organizer\demo\installers",
+        "docs": r"D:\repos\organizer\demo\docs",
+        } # will add more configurations later
+    }
+    path = config_path or os.path.join(os.environ.get("LOCALAPPDATA", "."), "Organizer", "config.json")
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+    except FileNotFoundError:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(defaults, f, indent=2)
+        cfg = defaults
+    dest_dirs = {
+        k: os.path.normcase(os.path.abspath(v))
+        for k, v in cfg.get("dest_dirs", {}).items()
+    }
+    return {"path": path, "dest_dirs":dest_dirs}
+    
 def journal(event: str, **fields) -> None:
     rec = {
         "ts_iso": datetime.now(timezone.utc).isoformat(),
@@ -182,7 +200,7 @@ def on_finalize_cb(path: str):
             return (op, name, reason)
         
         case "move":
-            dst_dir = DEST_DIRS.get(category)
+            dst_dir = CONFIG["dest_dirs"].get(category)
             if not dst_dir:
                 logger.warning(f"skip: category {category} not configured for {path}")
                 return ("skip", None, f"unconfigured_category:{category}")
@@ -244,20 +262,25 @@ def execute(op: str, src: str, dst: str, *, dry_run: bool, retries: int=3, backo
             return False
 
 def main(argv=None):
+    global CONFIG
+    
     curr_files = {}
     lock = threading.Lock()
 
     dir, dry_run, verbose = extract_args(argv)
     dir = os.path.normcase(os.path.abspath(dir))
+    
     configure_logger(verbose=verbose)
+    
+    CONFIG = load_config()
+    logger.info(f"config: dryrun={dry_run}, verbose={verbose} {CONFIG["path"]} | dest_dir={CONFIG["dest_dirs"]}")
+    
     maybe_rotate_journal()
 
     observer = Observer()
     handler = MyHandler(curr_files, lock)
     observer.schedule(handler, dir, recursive=False)
     observer.start()
-    logger.info("config: dry_run={} verbose={} dests={}", dry_run, verbose, DEST_DIRS)
-
 
     threading.Thread(target=exec_worker, args=(dry_run,), daemon=True).start()
     
