@@ -17,11 +17,17 @@ def decide_action(path: str, rules: list[dict]=None) -> tuple[str, str, str, str
   name = base.lower()
   file_ext = os.path.splitext(base)[1].lower()
   
-  # glob rules
+  # custom rules
   for r in rules:
-    if r.get("type") == "glob" and fnmatch.fnmatch(name, r["pattern"].lower()):
-      return ("move", r["category", base, f"rule:glob:{r['pattern']}"])
-  
+    if not r["enabled"]: continue
+    match r.get("type"):
+      case "glob":
+        if fnmatch.fnmatch(name, r["pattern"].lower()):
+          return ("move", r["category"], base, f"rule:glob:{r['pattern']}")
+      case "ext":
+        if file_ext in r["exts"]:
+          return ("move", r["category"], base, f"rule:ext:{r['exts']}")
+
   # extension fallbacks
   if base.startswith(".") or base.lower().endswith(TEMP_SUFFIXES):
       return ("skip", None, None, "temporary_or_hidden")

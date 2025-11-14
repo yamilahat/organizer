@@ -91,7 +91,7 @@ def load_config(config_path: str|None = None) -> dict:
         for k, v in cfg.get("dest_dirs", {}).items()
     }
     
-    return {"path": path, "dest_dirs":dest_dirs}
+    return {"path": path, "dest_dirs":dest_dirs, "rules": cfg["rules"]}
     
 def journal(event: str, **fields) -> None:
     rec = {
@@ -181,7 +181,6 @@ def run_stabilizer(
 
 def on_finalize_cb(path: str):
     op, category, base, reason = decide_action(path, CONFIG.get("rules", []))
-    print(CONFIG.get("rules", []))
     match op:
         case "skip":
             logger.info(f"planned skip: {path} ({reason})")
@@ -261,7 +260,7 @@ def main(argv=None):
     configure_logger(verbose=verbose)
     
     CONFIG = load_config()
-    logger.info(f"config: dryrun={dry_run}, verbose={verbose} {CONFIG["path"]} | dest_dir={CONFIG["dest_dirs"]}")
+    logger.info(f"config: dryrun={dry_run}, verbose={verbose} {CONFIG["path"]} | dest_dir={CONFIG["dest_dirs"]} | rules={CONFIG["rules"]}")
     
     maybe_rotate_journal()
 
