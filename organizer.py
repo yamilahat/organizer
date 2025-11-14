@@ -89,6 +89,8 @@ def journal(event: str, **fields) -> None:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception as e:
         logger.warning(f"journal failed: {e}")
+    else:
+        maybe_rotate_journal()
 
 def maybe_rotate_journal(max_bytes: int = 10_000_000) -> None:
     try:
@@ -248,6 +250,7 @@ def main(argv=None):
     dir, dry_run, verbose = extract_args(argv)
     dir = os.path.normcase(os.path.abspath(dir))
     configure_logger(verbose=verbose)
+    maybe_rotate_journal()
 
     observer = Observer()
     handler = MyHandler(curr_files, lock)
