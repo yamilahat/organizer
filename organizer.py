@@ -10,6 +10,9 @@ import time
 import threading
 import shutil
 from queue import Queue
+import uuid
+from datetime import datetime, timezone
+import json
 
 FileState = namedtuple('FileState', ['last_size', 'last_seen_ts'])
 
@@ -22,10 +25,13 @@ CATEGORIES = {
     "Docs": {".pdf", ".doc", ".docx", ".txt", ".md", ".rtf"},
 }
 DEST_DIRS = {
-    "Archives": r"D:\repos\organizer\demo\archives",
-    "Installers": r"D:\repos\organizer\demo\installers",
-    "Docs": r"D:\repos\organizer\demo\docs",
+    "archives": r"D:\repos\organizer\demo\archives",
+    "installers": r"D:\repos\organizer\demo\installers",
+    "docs": r"D:\repos\organizer\demo\docs",
 }
+JOURNAL_PATH = os.path.join(os.environ.get("LOCALAPPDATA", "."), "Organizer", "journal.ndjson")
+SESSION_ID = str(uuid.uuid4()) 
+VERSION = "0.1.0"
 
 exec_q = Queue()
 class MyHandler(FileSystemEventHandler):
@@ -67,6 +73,31 @@ def configure_logger(verbose: bool) -> None:
         format=fmt,
     )          
     logger.info("logger ready")
+
+def journal(event: str, **fields) -> None:
+    rec = {
+        "ts_iso": datetime.now(timezone.utc).isoformat(),
+        "event": event,
+        "pid": os.getpid(),
+        "session_id": SESSION_ID,
+        "version": VERSION,
+        **fields,
+    }
+    try:
+        os.makedirs(os.path.dirname(JOURNAL_PATH), exist_ok=True)
+        with open(JOURNAL_PATH, "a", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.warning(f"journal failed: {e}")
+
+def maybe_rotate_journal(max_bytes: int = 10_000_000) -> None:
+    try:
+        if os.path.exists(JOURNAL_PATH) and os.path.getsize(JOURNAL_PATH) > max_bytes:
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            base = os.path.splitext(JOURNAL_PATH)[0]
+            os.replace(JOURNAL_PATH, f"{base}-{ts}.ndjson")
+    except Exception as e:
+        logger.warning(f"journal rotate failed: {e}")
 
 def extract_args(argv) -> tuple[str, bool, bool]:
     p = argparse.ArgumentParser(prog="organizer", description="Downloads organizer (MVP)")
@@ -122,7 +153,7 @@ def run_stabilizer(
                 curr_files.pop(p, None)
 
         for p in to_finalize:
-            logger.success(f"finalized {p}")
+            logger.info(f"finalized {p}")
             on_finalize(p)
         
         time.sleep(POLL_INTERVAL)
@@ -156,6 +187,7 @@ def on_finalize_cb(path: str):
             
             abs_dest = os.path.join(dst_dir, name)
             logger.info(f"planned move: {path} -> {abs_dest} ({reason})")
+            journal("planned", src=path, dest=abs_dest, op=op, reason=reason, category=category)
             exec_q.put((path, abs_dest))
             return (op, abs_dest, reason)
         
@@ -170,8 +202,10 @@ def exec_worker(dry_run: bool):
             ok = execute("move", src, abs_dest, dry_run=dry_run)
             if ok:
                 logger.success(f"executed: {src} -> {abs_dest}")
+                journal("executed", src=src, dest=abs_dest, op="move", reason="ok")
             else:
                 logger.error(f"failed: {src} -> {abs_dest}")
+                journal("failed", src=src, dest=abs_dest, op="move", reason="executed_failed")
         finally:
             exec_q.task_done()
 
