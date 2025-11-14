@@ -13,8 +13,8 @@ from queue import Queue
 import uuid
 from datetime import datetime, timezone
 import json
-from planner import decide_action, TEMP_SUFFIXES
-from notifications import send_notification
+from src.organizer.planner import decide_action, TEMP_SUFFIXES
+from src.organizer.notifications import send_notification
 
 FileState = namedtuple('FileState', ['last_size', 'last_seen_ts'])
 

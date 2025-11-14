@@ -11,8 +11,8 @@ from datetime import datetime
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 
-from organizer import load_config, JOURNAL_PATH  # reuse existing helpers
-from notifications import send_notification
+from organizer.watcher import load_config, JOURNAL_PATH  # reuse existing helpers
+from src.organizer.notifications import send_notification
 
 # ---------------------------- Small utilities ----------------------------
 
@@ -542,19 +542,18 @@ def main():
         except Exception as e:
             messagebox.showerror("Error", f"Save failed: {e}"); return
 
-        script = os.path.join(os.path.dirname(__file__), "organizer.py")
         exe = pythonw_exe() if background_var.get() else sys.executable
         flags = 0
         if exe == sys.executable and background_var.get():
             flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
 
-        cmd = [exe, script, "--watch", root_dir]
+        cmd = [exe, "-m", "organizer.watcher", "--watch", root_dir]
         if bool(notify_var.get()): cmd.append("--notify")
         try:
             out = subprocess.DEVNULL if background_var.get() else None
             err = subprocess.DEVNULL if background_var.get() else None
             proc = subprocess.Popen(cmd, creationflags=flags, stdout=out, stderr=err, close_fds=True)
-            write_pidfile(proc.pid, root_dir)
+            write_pidfile(proc.pid, "organizer.watcher")
             send_notification("Organizer 🦸", f"Started (PID {proc.pid}).")
             # messagebox.showinfo("Watcher", f"Started (PID {proc.pid}).")
         except Exception as e:
