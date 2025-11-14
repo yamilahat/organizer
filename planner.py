@@ -4,6 +4,7 @@ EXT_SETS = {
     "Archives": {".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz"},
     "Installers": {".exe", ".msi", ".msix", ".msixbundle"},
     "Docs": {".pdf", ".doc", ".docx", ".txt", ".md", ".rtf"},
+    "Images": {".jpeg", ".jpg", ".png", ".gif", ".tiff", ".tif", ".raw", ".heif", ".svg"},
 }
 
 TEMP_SUFFIXES = (".crdownload", ".tmp", ".part")
