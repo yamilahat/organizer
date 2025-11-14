@@ -12,7 +12,7 @@ import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 
 from organizer.watcher import load_config, JOURNAL_PATH  # reuse existing helpers
-from src.organizer.notifications import send_notification
+from organizer.notifications import send_notification
 
 # ---------------------------- Small utilities ----------------------------
 
