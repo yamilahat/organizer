@@ -11,10 +11,7 @@ dependencies = [
   "watchdog",
   "loguru",
   "ttkbootstrap",
-  "win11toast",         # your current notifier
-  # add others you actually use:
-  # "winotify",
-  # "win10toast-click",
+  "win11toast",
 ]
 
 [tool.setuptools.packages.find]
