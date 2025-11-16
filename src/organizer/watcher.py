@@ -5,14 +5,14 @@ from loguru import logger
 from collections import namedtuple
 from typing import Callable
 import sys
-import os
+import os, traceback
 import time
 import threading
 import shutil
 from queue import Queue
 import uuid
 from datetime import datetime, timezone
-import json
+import json, atexit
 from organizer.planner import decide_action, TEMP_SUFFIXES
 from organizer.notifications import send_notification
 
@@ -253,6 +253,38 @@ def execute(op: str, src: str, dst: str, *, dry_run: bool, retries: int=3, backo
             logger.error(f"move failed after {attempt} attempts: {e}")
             return False
 
+def _write_crash(exc: BaseException) -> None:
+    try:
+        log_dir = os.path.join(os.environ.get("LOCALAPPDATA", "."), "Organizer")
+        os.makedirs(log_dir, exist_ok=True)
+        with open(os.path.join(log_dir, "watcher_crash.log"), "a", encoding="utf-8") as f:
+            f.write(f"\n=== {datetime.now().isoformat(timespec='seconds')} ===\n")
+            f.write("Python: " + sys.executable + "\n")
+            traceback.print_exception(type(exc), exc, exc.__traceback__, file=f)
+    except Exception:
+        pass
+
+def _pidfile_path() -> str:
+    return os.path.join(os.environ.get("LOCALAPPDATA", "."), "Organizer", "watcher.pid")
+
+def _write_pidfile(pid: int, watch_root: str) -> None:
+    path = _pidfile_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    rec = {
+        "pid": pid,
+        "watch_root": watch_root,
+        "module": "organizer.watcher",
+        "ts": datetime.now().isoformat(timespec="seconds"),
+    }
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(rec, f, indent=2)
+    os.replace(tmp, path)
+
+def _remove_pidfile() -> None:
+    try: os.remove(_pidfile_path())
+    except FileNotFoundError: pass
+
 def main(argv=None):
     global CONFIG
     
@@ -266,6 +298,23 @@ def main(argv=None):
     
     CONFIG = load_config()
     logger.info(f"config: dryrun={dry_run}, verbose={verbose}, notify={notify}, {CONFIG["path"]} | ")
+    
+    try:   
+        with open(_pidfile_path(), "r", encoding="utf-8") as f:
+            rec = json.load(f)
+        from subprocess import run
+        if str(rec.get("watch_root", "")).lower() == dir.lower():
+            out = run(["tasklist", "/FI", f"PID eq {rec.get('pid', -1)}"], capture_output=True, text=True)
+            if str(rec.get("pid","")) in out.stdout:
+                logger.warning("another watcher is already running for this watch_root; exiting")
+                return 
+        logger.info("watcher boot", extra={"event": "boot", "python": sys.version, "exe": sys.executable})
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    _write_pidfile(os.getpid(), dir)
+    atexit.register(_remove_pidfile)
     
     maybe_rotate_journal()
 
@@ -289,4 +338,8 @@ def main(argv=None):
     observer.join()
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BaseException as e:
+        _write_crash(e)
+        raise

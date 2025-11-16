@@ -13,6 +13,7 @@ from ttkbootstrap.constants import *
 
 from organizer.watcher import load_config, JOURNAL_PATH  # reuse existing helpers
 from organizer.notifications import send_notification
+from pathlib import Path
 
 # ---------------------------- Small utilities ----------------------------
 
@@ -116,6 +117,47 @@ def is_pid_running(pid: int) -> bool:
 def pythonw_exe() -> str | None:
     cand = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     return cand if os.path.exists(cand) else None
+
+def _startup_dir() -> Path:
+    return Path(os.environ["APPDATA"]) / r"Microsoft\Windows\Start Menu\Programs\Startup"
+
+def _pythonw() -> str:
+    p = Path(sys.executable).with_name("pythonw.exe")
+    return str(p) if p.exists() else sys.executable
+
+def _autostart_link_path() -> Path:
+    return _startup_dir() / "OrganizerWatcher.lnk"
+
+def _autostart_cmd_path() -> Path:
+    return _startup_dir() / "OrganizerWatcher.cmd"
+
+def is_autostart_enabled() -> bool:
+    return _autostart_link_path().exists() or _autostart_cmd_path().exists()
+
+def enable_autostart(watch_root: str) -> None:
+    _startup_dir().mkdir(parents=True, exist_ok=True)
+    exe = _pythonw()  # venv\pythonw.exe if present, else python.exe
+    log_dir = Path(os.environ.get("LOCALAPPDATA", ".")) / "Organizer"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log = log_dir / "autostart.log"
+
+    content = (
+        "@echo off\r\n"
+        f'echo %DATE% %TIME% launching "{exe}" -m organizer.watcher --watch "{watch_root}" >> "{log}" 2>&1\r\n'
+        # /B starts without a new window; START detaches so .cmd can exit immediately
+        f'start "" /B "{exe}" -m organizer.watcher --watch "{watch_root}" >> "{log}" 2>&1\r\n'
+        "exit /b 0\r\n"
+    )
+    _autostart_cmd_path().write_text(content, encoding="utf-8")
+
+
+
+def disable_autostart() -> None:
+    try: _autostart_cmd_path().unlink()
+    except FileNotFoundError: pass
+
+def is_autostart_enabled() -> bool:
+    return _autostart_cmd_path().exists()
 
 
 # ---------------------------- UI ----------------------------
@@ -476,9 +518,56 @@ def main():
 
     raw = read_raw_config(cfg_path)
     notify_var = tk.BooleanVar(value=bool(raw.get("notify", False)))
-    ttk.Checkbutton(bottom, text="Show notifications", variable=notify_var).pack(side="left", padx=6)
+    # ttk.Checkbutton(bottom, text="Show notifications", variable=notify_var).pack(side="left", padx=6)
 
-    
+    # Settings dialog: notifications + autostart
+    def open_settings():
+        dlg = tb.Toplevel(title="Settings")
+        dlg.transient(root)
+        dlg.geometry("520x260")
+        dlg.resizable(False, False)
+
+        # current state mirrors main variables
+        ns_notify = tk.BooleanVar(value=bool(notify_var.get()))
+        ns_autostart = tk.BooleanVar(value=is_autostart_enabled())
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+        frm.columnconfigure(1, weight=1)
+
+        # Watch root (read-only here; edit on main)
+        ttk.Label(frm, text="Watch root:").grid(row=0, column=0, sticky="w", pady=(0,6))
+        ttk.Label(frm, textvariable=watch_var).grid(row=0, column=1, sticky="w", pady=(0,6))
+
+        # Notifications
+        ttk.Checkbutton(frm, text="Show notifications", variable=ns_notify).grid(row=1, column=0, columnspan=2, sticky="w", pady=6)
+
+        # Autostart
+        ttk.Checkbutton(frm, text="Start watcher at logon (current user)", variable=ns_autostart).grid(row=2, column=0, columnspan=2, sticky="w", pady=6)
+
+        # Info
+        ttk.Label(frm, text="Autostart uses your Startup folder (no Task Scheduler).", bootstyle=SECONDARY).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6,12))
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=4, column=0, columnspan=2, sticky="e")
+        def _apply_and_close():
+            # propagate notify back to main var and config (saved on Save)
+            notify_var.set(bool(ns_notify.get()))
+            # apply autostart immediately
+            try:
+                if ns_autostart.get():
+                    enable_autostart(watch_var.get().strip())
+                    send_notification("Organizer", "Autostart enabled.")
+                else:
+                    disable_autostart()
+                    send_notification("Organizer", "Autostart disabled.")
+            except Exception as e:
+                messagebox.showerror("Autostart", f"Failed to update autostart: {e}")
+            dlg.destroy()
+
+        ttk.Button(btns, text="Cancel", command=dlg.destroy).pack(side="right", padx=6)
+        ttk.Button(btns, text="OK", command=_apply_and_close, bootstyle=PRIMARY).pack(side="right")
+
     
 
     def gather_config() -> dict:
@@ -516,15 +605,17 @@ def main():
         _on_content_configure()
 
     ttk.Button(bottom, text="Reload", command=reload_cfg, bootstyle=SECONDARY).pack(side="left", padx=6)
+    ttk.Button(bottom, text="Settings", command=open_settings).pack(side="left", padx=6)
 
     # PID-based control so UI restarts can still stop the watcher
     def update_status():
         rec = read_pidfile()
+        run_txt = "running" if rec and is_pid_running(rec.get("pid", -1)) else "stopped"
+        auto_txt = "autostart:on" if is_autostart_enabled() else "autostart:off"
         if rec and is_pid_running(rec.get("pid", -1)):
-            status_var.set(f"Watcher: running (PID {rec['pid']}) — {rec.get('watch_root', '')}")
+            status_var.set(f"Watcher: {run_txt} (PID {rec['pid']}) — {rec.get('watch_root', '')} — {auto_txt}")
         else:
-            status_var.set("Watcher: stopped")
-
+            status_var.set(f"Watcher: {run_txt} — {auto_txt}")
     def start_watcher():
         rec = read_pidfile()
         if rec and is_pid_running(rec.get("pid", -1)):
@@ -553,7 +644,7 @@ def main():
             out = subprocess.DEVNULL if background_var.get() else None
             err = subprocess.DEVNULL if background_var.get() else None
             proc = subprocess.Popen(cmd, creationflags=flags, stdout=out, stderr=err, close_fds=True)
-            write_pidfile(proc.pid, "organizer.watcher")
+            write_pidfile(proc.pid, root_dir)
             send_notification("Organizer 🦸", f"Started (PID {proc.pid}).")
             # messagebox.showinfo("Watcher", f"Started (PID {proc.pid}).")
         except Exception as e:
