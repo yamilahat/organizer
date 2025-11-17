@@ -9,12 +9,15 @@ import os, traceback
 import time
 import threading
 import shutil
+import ctypes, ctypes.wintypes as wt
 from queue import Queue
 import uuid
 from datetime import datetime, timezone
 import json, atexit
 from organizer.planner import decide_action, TEMP_SUFFIXES
 from organizer.notifications import send_notification
+from pathlib import Path
+import shutil
 
 FileState = namedtuple('FileState', ['last_size', 'last_seen_ts'])
 
@@ -24,6 +27,15 @@ JOURNAL_PATH = os.path.join(os.environ.get("LOCALAPPDATA", "."), "Organizer", "j
 SESSION_ID = str(uuid.uuid4()) 
 VERSION = "0.1.0"
 CONFIG: dict | None = None
+
+FILE_ATTRIBUTE_HIDDEN = 0x2
+FILE_ATTRIBUTE_SYSTEM = 0x4
+_GetFileAttributesW = ctypes.windll.kernel32.GetFileAttributesW
+_GetFileAttributesW.argtypes = [wt.LPCWSTR]
+_GetFileAttributesW.restype = wt.DWORD
+
+LARGE_MB = 500
+MIN_FREE_MB = 200
 
 exec_q = Queue()
 
@@ -50,6 +62,27 @@ class MyHandler(FileSystemEventHandler):
                 state = FileState(last_size=-1, last_seen_ts=now)
             self.curr_files[dst] = FileState(state.last_size, now)
         logger.debug(f"moved {src} -> {dst}")
+
+def is_hidden_or_system(path: str) -> bool:
+    try:
+        attrs = _GetFileAttributesW(path)
+        return attrs != 0xFFFFFFFF and (attrs & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) != 0
+    except Exception:
+        return False
+
+def under_root(path: str, root: str) -> bool:
+    try:
+        return Path(path).resolve().is_relative_to(Path(root).resolve())
+    except AttributeError:  # Python < 3.9 style fallback (not needed in 3.12, but safe)
+        p, r = Path(path).resolve(), Path(root).resolve()
+        return str(p).startswith(str(r))
+
+def dest_has_space(dest_dir: str, size_bytes: int) -> bool:
+    try:
+        total, used, free = shutil.disk_usage(dest_dir)
+        return free >= max(MIN_FREE_MB * 1024**2, size_bytes * 1)  # keep it simple for now
+    except Exception:
+        return True
 
 def configure_logger(verbose: bool) -> None:
     logger.remove()
@@ -136,6 +169,7 @@ def run_stabilizer(
     lock: threading.Lock,
     on_finalize: Callable[[str], tuple[str, str, str]],
     stop_event: threading.Event,
+    root: str,
 ) -> None:
     while not stop_event.is_set():
         now = time.monotonic()
@@ -178,11 +212,17 @@ def run_stabilizer(
 
         for p in to_finalize:
             logger.info(f"finalized {p}")
-            on_finalize(p)
+            on_finalize(p, root)
         
         time.sleep(POLL_INTERVAL)
 
-def on_finalize_cb(path: str):
+def on_finalize_cb(path: str, root: str):
+    if is_hidden_or_system(path) or Path(path).name.startswith("."):
+        journal("skip", src=path, reason="guard:hidden_or_system")
+        return
+    if not under_root(path, root):
+        journal("skip", src=path, reason="guard:outside_root")
+        return
     op, category, base, reason = decide_action(path, CONFIG.get("rules", []))
     match op:
         case "skip":
@@ -194,6 +234,14 @@ def on_finalize_cb(path: str):
             if not dst_dir:
                 logger.warning(f"skip: category {category} not configured for {path}")
                 return ("skip", None, f"unconfigured_category:{category}")
+            
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = 0
+            if size >= LARGE_MB * 1024**2 and not dest_has_space(os.path.dirname(dst_dir), size):
+                journal("skip", src=path, dest=dst_dir, reason="guard_low_free_space", extra={"size":size})
+                return
             
             abs_dest = os.path.join(dst_dir, base)
             logger.info(f"planned move: {path} -> {abs_dest} ({reason})")
@@ -331,6 +379,7 @@ def main(argv=None):
                        lock=lock,
                        on_finalize=on_finalize_cb,
                        stop_event=stop,
+                       root=dir,
                        )          
     except KeyboardInterrupt:
         observer.stop()
