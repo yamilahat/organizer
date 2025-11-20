@@ -4,6 +4,7 @@ import sys
 import json
 import webbrowser
 import subprocess
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from datetime import datetime
@@ -14,6 +15,13 @@ from ttkbootstrap.constants import *
 from organizer.watcher import load_config, JOURNAL_PATH  # reuse existing helpers
 from organizer.notifications import send_notification
 from pathlib import Path
+
+try:
+    import pystray
+    from PIL import Image
+except Exception:
+    pystray = None
+    Image = None
 
 # ---------------------------- Small utilities ----------------------------
 
@@ -73,6 +81,15 @@ RULE_TEMPLATES = [
     ("Checksums (.sha256 .sha1)", {"type": "ext", "exts": [".sha256", ".sha1"], "category": "docs", "enabled": True}),
     ("Screenshots (glob: *screenshot*)", {"type": "glob", "pattern": "*screenshot*", "category": "images", "enabled": True}),
 ]
+
+def _load_tray_image() -> "Image.Image | None":
+    if Image is None:
+        return None
+    icon_path = Path(__file__).resolve().parent / "assets" / "icon.png"
+    try:
+        return Image.open(icon_path)
+    except Exception:
+        return None
 
 # --- background watcher helpers (PID file + tasklist) ---
 
@@ -689,6 +706,65 @@ def main():
 
     # ttk.Button(bottom, text="Reload", command=reload_cfg, bootstyle=SECONDARY).pack(side="left", padx=6)
 
+    # --- Tray mode ---
+    tray_icon = None
+    tray_pause_timer = None
+
+    def show_window():
+        root.deiconify()
+        root.after(10, lambda: (root.lift(), root.focus_force()))
+
+    def _tray_menu():
+        return pystray.Menu(
+            pystray.MenuItem("Show Organizer", lambda icon, item: root.after(0, show_window)),
+            pystray.MenuItem("Start watcher", lambda icon, item: root.after(0, start_watcher)),
+            pystray.MenuItem("Stop watcher", lambda icon, item: root.after(0, stop_watcher)),
+            pystray.MenuItem("Pause 30 minutes", lambda icon, item: root.after(0, tray_pause_30m)),
+            pystray.MenuItem("Open config", lambda icon, item: root.after(0, lambda: webbrowser.open(f"file:///{cfg_path}"))),
+            pystray.MenuItem("Open journal folder", lambda icon, item: root.after(0, lambda: os.startfile(os.path.dirname(JOURNAL_PATH)))),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quit", lambda icon, item: root.after(0, lambda: (_stop_tray_icon(), root.destroy()))),
+        )
+
+    def _stop_tray_icon():
+        nonlocal tray_icon
+        if tray_icon:
+            try:
+                tray_icon.stop()
+            except Exception:
+                pass
+            tray_icon = None
+
+    def ensure_tray_icon():
+        nonlocal tray_icon
+        if pystray is None or Image is None:
+            messagebox.showwarning("Tray unavailable", "Install pystray and Pillow to enable the system tray.")
+            return None
+        if tray_icon:
+            return tray_icon
+        img = _load_tray_image()
+        if img is None:
+            messagebox.showwarning("Tray unavailable", "Could not load tray icon image.")
+            return None
+        tray_icon = pystray.Icon("Organizer", img, "Organizer", _tray_menu())
+        threading.Thread(target=tray_icon.run, daemon=True).start()
+        return tray_icon
+
+    def hide_to_tray():
+        if ensure_tray_icon() is None:
+            return
+        root.withdraw()
+        send_notification("Organizer", "Window hidden; running in system tray.")
+
+    def tray_pause_30m():
+        nonlocal tray_pause_timer
+        stop_watcher()
+        if tray_pause_timer:
+            root.after_cancel(tray_pause_timer)
+        tray_pause_timer = root.after(30 * 60 * 1000, start_watcher)
+        send_notification("Organizer", "Paused for 30 minutes; will auto-resume.")
+
+
     # PID-based control so UI restarts can still stop the watcher
     def update_status():
         rec = read_pidfile()
@@ -793,13 +869,18 @@ def main():
     btns = ttk.Frame(right)
     btns.grid(row=5, column=0, sticky="ew", padx=8, pady=8)
     btns.columnconfigure(0, weight=1)
-    for text, cmd, style in [
-        ("Start Watcher", start_watcher, SUCCESS),
-        ("Stop Watcher",  stop_watcher, DANGER),
-        ("Save",          save_all,     PRIMARY),
-        ("Reload",        reload_cfg,   SECONDARY),
-    ]:
-        ttk.Button(btns, text=text, command=cmd, bootstyle=style).pack(fill="x", pady=4)
+    actions = [
+        ("Start Watcher", start_watcher, SUCCESS, True),
+        ("Stop Watcher",  stop_watcher, DANGER, True),
+        ("Save",          save_all,     PRIMARY, True),
+        ("Reload",        reload_cfg,   SECONDARY, True),
+        ("Hide to Tray",  hide_to_tray, INFO, pystray is not None and Image is not None),
+    ]
+    for text, cmd, style, enabled in actions:
+        btn = ttk.Button(btns, text=text, command=cmd, bootstyle=style)
+        if not enabled:
+            btn.state(["disabled"])
+        btn.pack(fill="x", pady=4)
 
     # ttk.Button(bottom, text="Start Watcher", command=start_watcher, bootstyle=SUCCESS).pack(side="right")
     # ttk.Button(bottom, text="Stop Watcher", command=stop_watcher, bootstyle=DANGER).pack(side="right", padx=6)

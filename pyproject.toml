@@ -12,6 +12,8 @@ dependencies = [
   "loguru",
   "ttkbootstrap",
   "win11toast",
+  "pystray",
+  "Pillow",
 ]
 
 [tool.setuptools.packages.find]
