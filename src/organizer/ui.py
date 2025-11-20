@@ -66,6 +66,14 @@ def rows_to_rules(rows: list[tuple]) -> list[dict]:
             out.append({"type": "ext", "exts": exts, "category": cat, "enabled": bool(enabled)})
     return out
 
+RULE_TEMPLATES = [
+    ("Subtitles (.srt .vtt .ass)", {"type": "ext", "exts": [".srt", ".vtt", ".ass"], "category": "docs", "enabled": True}),
+    ("Disc images (.iso .img)", {"type": "ext", "exts": [".iso", ".img"], "category": "archives", "enabled": True}),
+    (".torrent", {"type": "ext", "exts": [".torrent"], "category": "archives", "enabled": True}),
+    ("Checksums (.sha256 .sha1)", {"type": "ext", "exts": [".sha256", ".sha1"], "category": "docs", "enabled": True}),
+    ("Screenshots (glob: *screenshot*)", {"type": "glob", "pattern": "*screenshot*", "category": "images", "enabled": True}),
+]
+
 # --- background watcher helpers (PID file + tasklist) ---
 
 def local_appdata() -> str:
@@ -466,6 +474,59 @@ def main():
         new_iid = rule_tree.insert("", j, values=vals)
         rule_tree.selection_set(new_iid)
 
+    def rule_template_picker():
+        menu = tk.Menu(root, tearoff=0)
+        for label, template in RULE_TEMPLATES:
+            def _add(t=template):
+                cat = t.get("category", "").strip().lower()
+                if cat and cat not in current_dest_dirs():
+                    messagebox.showwarning("Unknown category", f"'{cat}' is not defined in Destinations.")
+                    return
+                if t.get("type") == "ext":
+                    rule_tree.insert("", "end", values=(bool(t.get("enabled", True)), "ext", " ".join(t.get("exts", [])), cat))
+                elif t.get("type") == "glob":
+                    rule_tree.insert("", "end", values=(bool(t.get("enabled", True)), "glob", t.get("pattern", ""), cat))
+            menu.add_command(label=label, command=_add)
+        try:
+            menu.tk_popup(root.winfo_pointerx(), root.winfo_pointery())
+        finally:
+            menu.grab_release()
+
+    def rule_import():
+        path = filedialog.askopenfilename(title="Import rules (JSON)", filetypes=[("JSON files", "*.json"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, list):
+                raise ValueError("Expected a list of rules.")
+        except Exception as e:
+            messagebox.showerror("Import failed", f"Could not import rules: {e}")
+            return
+        # clear current
+        for iid in rule_tree.get_children(""):
+            rule_tree.delete(iid)
+        for row in rules_to_rows(data):
+            rule_tree.insert("", "end", values=row)
+        send_notification("Organizer", f"Imported {len(rule_tree.get_children(''))} rules from {os.path.basename(path)}")
+
+    def rule_export():
+        path = filedialog.asksaveasfilename(
+            title="Export rules (JSON)",
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            rules_out = rows_to_rules(current_rule_rows())
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                json.dump(rules_out, f, indent=2)
+            send_notification("Organizer", f"Exported {len(rules_out)} rules to {os.path.basename(path)}")
+        except Exception as e:
+            messagebox.showerror("Export failed", f"Could not export rules: {e}")
+
     rule_toolbar = ttk.Frame(rules_frame)
     rule_toolbar.grid(row=1, column=0, sticky="w", padx=8, pady=6)
     for btn in (
@@ -475,6 +536,9 @@ def main():
         ttk.Button(rule_toolbar, text="Enable/Disable", command=rule_toggle, bootstyle=WARNING),
         ttk.Button(rule_toolbar, text="Up", command=lambda: rule_move(-1)),
         ttk.Button(rule_toolbar, text="Down", command=lambda: rule_move(1)),
+        ttk.Button(rule_toolbar, text="Templates", command=rule_template_picker, bootstyle=INFO),
+        ttk.Button(rule_toolbar, text="Import", command=rule_import),
+        ttk.Button(rule_toolbar, text="Export", command=rule_export),
     ):
         btn.pack(side="left", padx=4)
     
