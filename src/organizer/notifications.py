@@ -45,18 +45,6 @@ def _user_icon() -> Optional[str]:
 def _resolve_icon() -> Optional[str]:
     return bundled_icon() or _user_icon()
 
-def _open_in_explorer(target: str | None) -> None:
-    try:
-        if not target:
-            return
-        p = Path(target)
-        if p.is_file():
-            subprocess.Popen(["explorer", "/select,", str(p)])
-        else:
-            subprocess.Popen(["explorer", str(p)])
-    except Exception:
-        pass
-
 # -------------------- public API --------------------
 def send_notification(title: str, body: str, enable: bool = True, path: str | None = None) -> None:
     """
@@ -75,7 +63,8 @@ def send_notification(title: str, body: str, enable: bool = True, path: str | No
     _last_toasts.append(now)
 
     icon = _resolve_icon()
-    click_handler = (lambda: _open_in_explorer(path)) if path else None
+
+    click_target = str(Path(path).parent) if path else None                                                                                                  
 
     def _fire():
         try:
@@ -84,7 +73,7 @@ def send_notification(title: str, body: str, enable: bool = True, path: str | No
                 body,
                 duration="short",
                 icon=icon,
-                on_click=click_handler,
+                on_click=click_target,
             )
         except Exception:
             pass
