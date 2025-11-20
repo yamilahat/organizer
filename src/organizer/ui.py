@@ -711,6 +711,7 @@ def main():
     tray_icon = None
     tray_pause_timer = None
     start_stop_btn = None
+    tray_warned = False
 
     def show_window():
         root.deiconify()
@@ -738,22 +739,32 @@ def main():
             tray_icon = None
 
     def ensure_tray_icon():
-        nonlocal tray_icon
+        nonlocal tray_icon, tray_warned
         if pystray is None or Image is None:
-            messagebox.showwarning("Tray unavailable", "Install pystray and Pillow to enable the system tray.")
+            if not tray_warned:
+                messagebox.showwarning(
+                    "Tray unavailable",
+                    "Install optional deps for tray:\n\npip install pystray Pillow",
+                )
+                tray_warned = True
             return None
         if tray_icon:
             return tray_icon
         img = _load_tray_image()
         if img is None:
-            messagebox.showwarning("Tray unavailable", "Could not load tray icon image.")
+            if not tray_warned:
+                messagebox.showwarning("Tray unavailable", "Could not load tray icon image.")
+                tray_warned = True
             return None
         tray_icon = pystray.Icon("Organizer", img, "Organizer", _tray_menu())
         threading.Thread(target=tray_icon.run, daemon=True).start()
         return tray_icon
 
     def hide_to_tray():
-        if ensure_tray_icon() is None:
+        icon = ensure_tray_icon()
+        if icon is None:
+            # fall back to minimizing to taskbar so window is still reachable
+            root.iconify()
             return
         root.withdraw()
         send_notification("Organizer", "Window hidden; running in system tray.")
@@ -839,9 +850,9 @@ def main():
                 # messagebox.showinfo("Watcher", "Stopped.")
                 send_notification("Organizer", "Stopped")
             else:
-            messagebox.showwarning("Watcher", "Failed to stop watcher.")
+                send_notification("Watcher", "Failed to stop watcher.")
         except Exception as e:
-            messagebox.showerror("Watcher", f"Failed to stop: {e}")
+            send_notification("Watcher", f"Failed to stop: {e}")
         finally:
             update_status()
 
