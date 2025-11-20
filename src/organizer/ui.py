@@ -205,6 +205,7 @@ def main():
     root.minsize(1100, 740)
 
     status_var = tk.StringVar(master=root, value="Watcher: unknown")
+    running_var = tk.BooleanVar(master=root, value=False)
 
     # thin scrollbars everywhere
     style = root.style if hasattr(root, "style") else ttk.Style()
@@ -709,6 +710,7 @@ def main():
     # --- Tray mode ---
     tray_icon = None
     tray_pause_timer = None
+    start_stop_btn = None
 
     def show_window():
         root.deiconify()
@@ -769,11 +771,18 @@ def main():
     def update_status():
         rec = read_pidfile()
         run_txt = "running" if rec and is_pid_running(rec.get("pid", -1)) else "stopped"
+        running = bool(rec and is_pid_running(rec.get("pid", -1)))
+        running_var.set(running)
         auto_txt = "autostart:on" if is_autostart_enabled() else "autostart:off"
         if rec and is_pid_running(rec.get("pid", -1)):
             status_var.set(f"Watcher: {run_txt} (PID {rec['pid']}) - {rec.get('watch_root', '')} - {auto_txt}")
         else:
             status_var.set(f"Watcher: {run_txt} - {auto_txt}")
+        if start_stop_btn:
+            start_stop_btn.config(
+                text="Stop Watcher" if running else "Start Watcher",
+                bootstyle=DANGER if running else SUCCESS,
+            )
     def start_watcher():
         rec = read_pidfile()
         if rec and is_pid_running(rec.get("pid", -1)):
@@ -830,11 +839,17 @@ def main():
                 # messagebox.showinfo("Watcher", "Stopped.")
                 send_notification("Organizer", "Stopped")
             else:
-                messagebox.showwarning("Watcher", "Failed to stop watcher.")
+            messagebox.showwarning("Watcher", "Failed to stop watcher.")
         except Exception as e:
             messagebox.showerror("Watcher", f"Failed to stop: {e}")
         finally:
             update_status()
+
+    def start_stop_toggle():
+        if running_var.get():
+            stop_watcher()
+        else:
+            start_watcher()
 
     def restart_watcher():
         rec = read_pidfile()
@@ -869,18 +884,16 @@ def main():
     btns = ttk.Frame(right)
     btns.grid(row=5, column=0, sticky="ew", padx=8, pady=8)
     btns.columnconfigure(0, weight=1)
+    start_stop_btn = ttk.Button(btns, text="Start Watcher", command=start_stop_toggle, bootstyle=SUCCESS)
+    start_stop_btn.pack(fill="x", pady=4)
+
     actions = [
-        ("Start Watcher", start_watcher, SUCCESS, True),
-        ("Stop Watcher",  stop_watcher, DANGER, True),
-        ("Save",          save_all,     PRIMARY, True),
-        ("Reload",        reload_cfg,   SECONDARY, True),
-        ("Hide to Tray",  hide_to_tray, INFO, pystray is not None and Image is not None),
+        ("Save",          save_all,     PRIMARY),
+        ("Reload",        reload_cfg,   SECONDARY),
+        ("Hide to Tray",  hide_to_tray, INFO),
     ]
-    for text, cmd, style, enabled in actions:
-        btn = ttk.Button(btns, text=text, command=cmd, bootstyle=style)
-        if not enabled:
-            btn.state(["disabled"])
-        btn.pack(fill="x", pady=4)
+    for text, cmd, style in actions:
+        ttk.Button(btns, text=text, command=cmd, bootstyle=style).pack(fill="x", pady=4)
 
     # ttk.Button(bottom, text="Start Watcher", command=start_watcher, bootstyle=SUCCESS).pack(side="right")
     # ttk.Button(bottom, text="Stop Watcher", command=stop_watcher, bootstyle=DANGER).pack(side="right", padx=6)
