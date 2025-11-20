@@ -19,6 +19,13 @@ from organizer.notifications import send_notification
 from pathlib import Path
 import shutil
 
+DEFAULT_BUCKETS = {
+    "archives": "archives",
+    "installers": "installers",
+    "docs": "docs",
+    "images": "images",
+}
+
 FileState = namedtuple('FileState', ['last_size', 'last_seen_ts'])
 
 POLL_INTERVAL = 0.5
@@ -100,15 +107,33 @@ def configure_logger(verbose: bool) -> None:
     )          
     logger.info("logger ready")
 
+def _default_dest_dirs() -> dict[str, str]:
+    """
+    Build safe first-run defaults:
+    - Prefer repo demo buckets when present
+    - Otherwise fall back to user Downloads subfolders
+    """
+    here = Path(__file__).resolve()
+    repo_root = here.parent.parent.parent
+    demo_root = repo_root / "demo"
+    downloads = Path.home() / "Downloads"
+
+    dests = {}
+    for category, folder in DEFAULT_BUCKETS.items():
+        demo_candidate = demo_root / folder
+        if demo_candidate.exists():
+            dests[category] = str(demo_candidate.resolve())
+        else:
+            fallback = downloads / folder.capitalize()
+            fallback.mkdir(parents=True, exist_ok=True)
+            dests[category] = str(fallback.resolve())
+    return dests
+
 def load_config(config_path: str|None = None) -> dict:
-    defaults = {"dest_dirs": {
-        "archives": r"D:\repos\organizer\demo\archives",
-        "installers": r"D:\repos\organizer\demo\installers",
-        "docs": r"D:\repos\organizer\demo\docs",
-                },
-                "rules": []
-                # will add more configurations later
-            }
+    defaults = {
+        "dest_dirs": _default_dest_dirs(),
+        "rules": [],
+    }
     path = config_path or os.path.join(os.environ.get("LOCALAPPDATA", "."), "Organizer", "config.json")
     
     try:
@@ -345,7 +370,7 @@ def main(argv=None):
     configure_logger(verbose=verbose)
     
     CONFIG = load_config()
-    logger.info(f"config: dryrun={dry_run}, verbose={verbose}, notify={notify}, {CONFIG["path"]} | ")
+    logger.info(f"config: dryrun={dry_run}, verbose={verbose}, notify={notify}, {CONFIG['path']} | ")
     
     try:   
         with open(_pidfile_path(), "r", encoding="utf-8") as f:
