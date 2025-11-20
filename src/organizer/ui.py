@@ -589,56 +589,6 @@ def main():
     notify_var = tk.BooleanVar(value=bool(raw.get("notify", False)))
     ttk.Checkbutton(right, text="Notifications", variable=notify_var).grid(row=3, column=0, sticky="w", padx=8)
 
-    # Settings dialog: notifications + autostart
-    def open_settings():
-        dlg = tb.Toplevel(title="Settings")
-        dlg.transient(root)
-        dlg.geometry("520x260")
-        dlg.resizable(False, False)
-
-        # current state mirrors main variables
-        ns_notify = tk.BooleanVar(value=bool(notify_var.get()))
-        ns_autostart = tk.BooleanVar(value=is_autostart_enabled())
-
-        frm = ttk.Frame(dlg, padding=12)
-        frm.pack(fill="both", expand=True)
-        frm.columnconfigure(1, weight=1)
-
-        # Watch root (read-only here; edit on main)
-        ttk.Label(frm, text="Watch root:").grid(row=0, column=0, sticky="w", pady=(0,6))
-        ttk.Label(frm, textvariable=watch_var).grid(row=0, column=1, sticky="w", pady=(0,6))
-
-        # Notifications
-        ttk.Checkbutton(frm, text="Show notifications", variable=ns_notify).grid(row=1, column=0, columnspan=2, sticky="w", pady=6)
-
-        # Autostart
-        ttk.Checkbutton(frm, text="Start watcher at logon (current user)", variable=ns_autostart).grid(row=2, column=0, columnspan=2, sticky="w", pady=6)
-
-        # Info
-        ttk.Label(frm, text="Autostart uses your Startup folder (no Task Scheduler).", bootstyle=SECONDARY).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6,12))
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=4, column=0, columnspan=2, sticky="e")
-        def _apply_and_close():
-            # propagate notify back to main var and config (saved on Save)
-            notify_var.set(bool(ns_notify.get()))
-            # apply autostart immediately
-            try:
-                if ns_autostart.get():
-                    enable_autostart(watch_var.get().strip())
-                    send_notification("Organizer", "Autostart enabled.")
-                else:
-                    disable_autostart()
-                    send_notification("Organizer", "Autostart disabled.")
-            except Exception as e:
-                messagebox.showerror("Autostart", f"Failed to update autostart: {e}")
-            dlg.destroy()
-
-        ttk.Button(btns, text="Cancel", command=dlg.destroy).pack(side="right", padx=6)
-        ttk.Button(btns, text="OK", command=_apply_and_close, bootstyle=PRIMARY).pack(side="right")
-
-    
-
     def gather_config() -> dict:
       dests = {}
       for iid in dest_tree.get_children(""):
@@ -674,7 +624,6 @@ def main():
         _on_content_configure()
 
     # ttk.Button(bottom, text="Reload", command=reload_cfg, bootstyle=SECONDARY).pack(side="left", padx=6)
-    # ttk.Button(bottom, text="Settings", command=open_settings).pack(side="left", padx=6)
 
     # PID-based control so UI restarts can still stop the watcher
     def update_status():
@@ -785,7 +734,6 @@ def main():
         ("Stop Watcher",  stop_watcher, DANGER),
         ("Save",          save_all,     PRIMARY),
         ("Reload",        reload_cfg,   SECONDARY),
-        ("Settings",      open_settings, INFO),
     ]:
         ttk.Button(btns, text=text, command=cmd, bootstyle=style).pack(fill="x", pady=4)
 
