@@ -174,10 +174,16 @@ def main():
     watch_root_initial = raw.get("watch_root") or default_downloads
 
     # Window
-    root = tb.Window(themename="superhero")  # try "darkly" for dark mode
-    root.title("Organizer — Setup")
-    root.geometry("1040x760")     # a little longer/taller
-    root.minsize(940, 680)
+    root = tb.Window(themename="superhero")  # modern look like the screenshot
+    root.title("Organizer")
+    root.geometry("1000x700")
+    root.minsize(900, 640)
+
+    # thin scrollbars everywhere
+    style = ttk.Style()
+    style.configure("Thin.Vertical.TScrollbar", width=8)
+    # style.configure("Thin.Horizontal.TScrollbar", width=8)
+
 
     # ---- Scrollable container (Canvas + Frame) ----
     outer = ttk.Frame(root)
@@ -191,6 +197,9 @@ def main():
     canvas.pack(side="left", fill="both", expand=True)
 
     content = ttk.Frame(canvas)
+    content.columnconfigure(0, weight=3)   # left (Notebook)
+    content.columnconfigure(1, weight=2)   # right (Actions)
+
     content_id = canvas.create_window((0, 0), window=content, anchor="nw")
     _hide_after_id = None
     # Resize/scroll bindings
@@ -248,8 +257,28 @@ def main():
                command=lambda: os.startfile(os.path.dirname(JOURNAL_PATH))).pack(side="left", padx=10)
 
     # ----- Destinations -----
-    dest_frame = ttk.Labelframe(content, text="Destinations")
-    dest_frame.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
+    # --- Left column: Notebook ---
+    left_nb = ttk.Notebook(content, bootstyle=PRIMARY)
+    left_nb.grid(row=1, column=0, sticky="nsew", padx=12, pady=8)
+
+    dest_tab = ttk.Frame(left_nb)
+    rules_tab = ttk.Frame(left_nb)
+    left_nb.add(dest_tab, text="Destinations")
+    left_nb.add(rules_tab, text="Rules")
+
+    dest_frame = ttk.Labelframe(dest_tab, text="Destinations")
+    dest_frame.pack(fill="both", expand=True, padx=8, pady=8)
+    dest_frame.columnconfigure(0, weight=1)
+    dest_frame.rowconfigure(0, weight=1)
+    
+    dest_cols = ("category", "folder")
+    dest_tree = ttk.Treeview(dest_frame, columns=dest_cols, show="headings", height=8, bootstyle=INFO)
+    dest_tree.heading("category", text="Category")
+    dest_tree.heading("folder", text="Folder")
+    dest_tree.column("category", width=180, stretch=True, anchor="w")
+    dest_tree.column("folder", width=500, stretch=True, anchor="w")
+
+
     dest_frame.columnconfigure(0, weight=1)
     dest_frame.rowconfigure(0, weight=1)
 
@@ -257,12 +286,12 @@ def main():
         dest_dirs.setdefault(k, dest_dirs.get(k, ""))
 
     dest_cols = ("category", "folder")
-    dest_tree = ttk.Treeview(dest_frame, columns=dest_cols, show="headings", height=6, bootstyle=INFO)
+    dest_tree = ttk.Treeview(dest_frame, columns=dest_cols, show="headings", height=8, bootstyle=INFO)
     for c, w in (("category", 240), ("folder", 680)):
         dest_tree.heading(c, text=c.capitalize()); dest_tree.column(c, width=w, anchor="w")
     dest_tree.grid(row=0, column=0, columnspan=6, sticky="nsew", padx=8, pady=8)
     ttk.Style().configure("Treeview", rowheight=26)
-    yscroll_dest = ttk.Scrollbar(dest_frame, orient="vertical", command=dest_tree.yview)
+    yscroll_dest = ttk.Scrollbar(dest_frame, orient="vertical", command=dest_tree.yview, style="Thin.Vertical.TScrollbar")
     dest_tree.configure(yscrollcommand=yscroll_dest.set)
     yscroll_dest.grid(row=0, column=6, sticky="ns")
 
@@ -322,26 +351,47 @@ def main():
         if folder and os.path.isdir(folder):
             os.startfile(folder)
 
-    ttk.Button(dest_frame, text="Add", command=dest_add, bootstyle=SUCCESS).grid(row=1, column=0, padx=4, pady=6, sticky="w")
-    ttk.Button(dest_frame, text="Rename", command=dest_rename).grid(row=1, column=1, padx=4, pady=6, sticky="w")
-    ttk.Button(dest_frame, text="Browse…", command=dest_browse).grid(row=1, column=2, padx=4, pady=6, sticky="w")
-    ttk.Button(dest_frame, text="Remove", command=dest_remove, bootstyle=DANGER).grid(row=1, column=3, padx=4, pady=6, sticky="w")
-    ttk.Button(dest_frame, text="Open", command=dest_open).grid(row=1, column=4, padx=4, pady=6, sticky="e")
+    dest_toolbar = ttk.Frame(dest_frame)
+    dest_toolbar.grid(row=1, column=0, sticky="w", padx=8, pady=6)
+    for btn in (
+        ttk.Button(dest_toolbar, text="Add", command=dest_add, bootstyle=SUCCESS),
+        ttk.Button(dest_toolbar, text="Rename", command=dest_rename),
+        ttk.Button(dest_toolbar, text="Browse…", command=dest_browse),
+        ttk.Button(dest_toolbar, text="Remove", command=dest_remove, bootstyle=DANGER),
+        ttk.Button(dest_toolbar, text="Open", command=dest_open),
+    ):
+        btn.pack(side="left", padx=4)
 
     # ----- Rules -----
-    rules_frame = ttk.Labelframe(content, text="Rules (first match wins)")
-    rules_frame.grid(row=2, column=0, sticky="nsew", padx=12, pady=6)
+    rules_frame = ttk.Labelframe(rules_tab, text="Rules (first match wins)")
+    rules_frame.pack(fill="both", expand=True, padx=8, pady=8)
+    rules_frame.columnconfigure(0, weight=1)
+    rules_frame.rowconfigure(0, weight=1)
+
     rules_frame.columnconfigure(0, weight=1)
     rules_frame.rowconfigure(0, weight=1)
 
     rule_cols = ("enabled", "type", "field", "category")
-    rule_tree = ttk.Treeview(rules_frame, columns=rule_cols, show="headings", height=6, bootstyle=PRIMARY)
-    for c, w in (("enabled", 110), ("type", 110), ("field", 560), ("category", 200)):
-        rule_tree.heading(c, text=c.capitalize()); rule_tree.column(c, width=w, anchor="w")
-    rule_tree.grid(row=0, column=0, columnspan=6, sticky="nsew", padx=8, pady=8)
-    yscroll_rule = ttk.Scrollbar(rules_frame, orient="vertical", command=rule_tree.yview)
-    rule_tree.configure(yscrollcommand=yscroll_rule.set)
-    yscroll_rule.grid(row=0, column=6, sticky="ns")
+    rule_tree = ttk.Treeview(rules_frame, columns=rule_cols, show="headings", height=8, bootstyle=PRIMARY)
+    rule_tree.heading("enabled", text="Enabled")
+    rule_tree.heading("type", text="Type")
+    rule_tree.heading("field", text="Pattern / Extensions")
+    rule_tree.heading("category", text="Category")
+
+    rule_tree.column("enabled", width=90, stretch=False, anchor="w")
+    rule_tree.column("type", width=90, stretch=False, anchor="w")
+    rule_tree.column("field", width=420, stretch=True, anchor="w")
+    rule_tree.column("category", width=140, stretch=False, anchor="w")
+
+
+    # rule_cols = ("enabled", "type", "field", "category")
+    # rule_tree = ttk.Treeview(rules_frame, columns=rule_cols, show="headings", height=6, bootstyle=PRIMARY)
+    # for c, w in (("enabled", 110), ("type", 110), ("field", 560), ("category", 200)):
+    #     rule_tree.heading(c, text=c.capitalize()); rule_tree.column(c, width=w, anchor="w")
+    # rule_tree.grid(row=0, column=0, columnspan=6, sticky="nsew", padx=8, pady=8)
+    # yscroll_rule = ttk.Scrollbar(rules_frame, orient="vertical", command=rule_tree.yview)
+    # rule_tree.configure(yscrollcommand=yscroll_rule.set)
+    # yscroll_rule.grid(row=0, column=6, sticky="ns")
 
     for row in rules_to_rows(rules):
         rule_tree.insert("", "end", values=row)
@@ -404,26 +454,32 @@ def main():
         new_iid = rule_tree.insert("", j, values=vals)
         rule_tree.selection_set(new_iid)
 
-    ttk.Button(rules_frame, text="Add", command=rule_add, bootstyle=SUCCESS).grid(row=1, column=0, padx=4, pady=6, sticky="w")
-    ttk.Button(rules_frame, text="Edit", command=rule_edit).grid(row=1, column=1, padx=4, pady=6, sticky="w")
-    ttk.Button(rules_frame, text="Delete", command=rule_delete, bootstyle=DANGER).grid(row=1, column=2, padx=4, pady=6, sticky="w")
-    ttk.Button(rules_frame, text="Enable/Disable", command=rule_toggle, bootstyle=WARNING).grid(row=1, column=3, padx=4, pady=6, sticky="w")
-    ttk.Button(rules_frame, text="Up", command=lambda: rule_move(-1)).grid(row=1, column=4, padx=4, pady=6, sticky="e")
-    ttk.Button(rules_frame, text="Down", command=lambda: rule_move(1)).grid(row=1, column=5, padx=4, pady=6, sticky="e")
+    rule_toolbar = ttk.Frame(rules_frame)
+    rule_toolbar.grid(row=1, column=0, sticky="w", padx=8, pady=6)
+    for btn in (
+        ttk.Button(rule_toolbar, text="Add", command=rule_add, bootstyle=SUCCESS),
+        ttk.Button(rule_toolbar, text="Edit", command=rule_edit),
+        ttk.Button(rule_toolbar, text="Delete", command=rule_delete, bootstyle=DANGER),
+        ttk.Button(rule_toolbar, text="Enable/Disable", command=rule_toggle, bootstyle=WARNING),
+        ttk.Button(rule_toolbar, text="Up", command=lambda: rule_move(-1)),
+        ttk.Button(rule_toolbar, text="Down", command=lambda: rule_move(1)),
+    ):
+        btn.pack(side="left", padx=4)
+    
 
     # ----- Journal (collapsible + pretty) -----
     journal_visible = tk.BooleanVar(value=False)
 
     toggle_row = ttk.Frame(content)
-    toggle_row.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 4))
+    toggle_row.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(0,4))
 
     jrnl_container = ttk.Labelframe(content, text="Recent Activity (journal)")
-    jrnl_container.grid(row=4, column=0, sticky="nsew", padx=12, pady=(0, 8))
+    jrnl_container.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=12, pady=(0,8))
     jrnl_container.columnconfigure(0, weight=1)
     jrnl_container.rowconfigure(0, weight=1)
 
     txt = tk.Text(jrnl_container, wrap="none")
-    ys = ttk.Scrollbar(jrnl_container, orient="vertical", command=txt.yview)
+    ys = ttk.Scrollbar(jrnl_container, orient="vertical", command=txt.yview, style="Thin.Vertical.TScrollbar")
     txt.configure(yscrollcommand=ys.set, state="disabled")
     txt.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
     ys.grid(row=0, column=1, sticky="ns", pady=8)
@@ -505,20 +561,21 @@ def main():
     jrnl_container.grid_remove()   # start hidden
     refresh_journal()              # schedule timer
 
-    # ----- Bottom bar -----
-    bottom = ttk.Frame(content)
-    bottom.grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 10))
-    bottom.columnconfigure(0, weight=1)
+    # --- Right column: Actions & Settings ---
+    right = ttk.Labelframe(content, text="Actions")
+    right.grid(row=1, column=1, sticky="nsew", padx=(0,12), pady=8)
+    right.columnconfigure(0, weight=1)
 
+    # status
     status_var = tk.StringVar(value="Watcher: unknown")
-    ttk.Label(bottom, textvariable=status_var).pack(side="left")
+    ttk.Label(right, textvariable=status_var, wraplength=260).grid(row=0, column=0, sticky="w", padx=8, pady=(8,6))
 
+    # toggles
     background_var = tk.BooleanVar(master=root, value=True)
-    ttk.Checkbutton(bottom, text="Run watcher in background", variable=background_var).pack(side="left", padx=10)
+    ttk.Checkbutton(right, text="Run in background", variable=background_var).grid(row=1, column=0, sticky="w", padx=8)
 
-    raw = read_raw_config(cfg_path)
     notify_var = tk.BooleanVar(value=bool(raw.get("notify", False)))
-    # ttk.Checkbutton(bottom, text="Show notifications", variable=notify_var).pack(side="left", padx=6)
+    ttk.Checkbutton(right, text="Notifications", variable=notify_var).grid(row=2, column=0, sticky="w", padx=8)
 
     # Settings dialog: notifications + autostart
     def open_settings():
@@ -604,8 +661,8 @@ def main():
         send_notification("Reloaded", "Configuration reloaded from disk.")
         _on_content_configure()
 
-    ttk.Button(bottom, text="Reload", command=reload_cfg, bootstyle=SECONDARY).pack(side="left", padx=6)
-    ttk.Button(bottom, text="Settings", command=open_settings).pack(side="left", padx=6)
+    # ttk.Button(bottom, text="Reload", command=reload_cfg, bootstyle=SECONDARY).pack(side="left", padx=6)
+    # ttk.Button(bottom, text="Settings", command=open_settings).pack(side="left", padx=6)
 
     # PID-based control so UI restarts can still stop the watcher
     def update_status():
@@ -707,9 +764,22 @@ def main():
             send_notification("Saved", "Configuration saved.")
         update_status()
 
-    ttk.Button(bottom, text="Start Watcher", command=start_watcher, bootstyle=SUCCESS).pack(side="right")
-    ttk.Button(bottom, text="Stop Watcher", command=stop_watcher, bootstyle=DANGER).pack(side="right", padx=6)
-    ttk.Button(bottom, text="Save", command=save_all, bootstyle=PRIMARY).pack(side="right", padx=6)
+    # buttons
+    btns = ttk.Frame(right)
+    btns.grid(row=3, column=0, sticky="ew", padx=8, pady=8)
+    btns.columnconfigure(0, weight=1)
+    for text, cmd, style in [
+        ("Start Watcher", start_watcher, SUCCESS),
+        ("Stop Watcher",  stop_watcher, DANGER),
+        ("Save",          save_all,     PRIMARY),
+        ("Reload",        reload_cfg,   SECONDARY),
+        ("Settings",      open_settings, INFO),
+    ]:
+        ttk.Button(btns, text=text, command=cmd, bootstyle=style).pack(fill="x", pady=4)
+
+    # ttk.Button(bottom, text="Start Watcher", command=start_watcher, bootstyle=SUCCESS).pack(side="right")
+    # ttk.Button(bottom, text="Stop Watcher", command=stop_watcher, bootstyle=DANGER).pack(side="right", padx=6)
+    # ttk.Button(bottom, text="Save", command=save_all, bootstyle=PRIMARY).pack(side="right", padx=6)
 
     # Status ticker + initial fill
     update_status()
