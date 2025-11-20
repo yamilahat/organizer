@@ -719,6 +719,7 @@ def main():
     tray_pause_timer = None
     start_stop_btn = None
     tray_warned = False
+    action_inflight = threading.Event()
 
     def show_window():
         root.deiconify()
@@ -786,6 +787,12 @@ def main():
 
 
     # PID-based control so UI restarts can still stop the watcher
+    def _set_start_stop_btn(text: str, style, disabled: bool = False) -> None:
+        if not start_stop_btn:
+            return
+        start_stop_btn.config(text=text, bootstyle=style)
+        start_stop_btn.state(["disabled"] if disabled else ["!disabled"])
+
     def compute_health_message() -> str:
         msgs: list[str] = []
         root_dir = watch_var.get().strip()
@@ -812,82 +819,110 @@ def main():
 
     def update_status():
         rec = read_pidfile()
-        run_txt = "running" if rec and is_pid_running(rec.get("pid", -1)) else "stopped"
-        running = bool(rec and is_pid_running(rec.get("pid", -1)))
+        pid = int(rec.get("pid", -1)) if rec else -1
+        running = pid >= 0 and is_pid_running(pid)
         running_var.set(running)
         auto_txt = "autostart:on" if is_autostart_enabled() else "autostart:off"
         root_disp = Path(rec.get("watch_root", "")).name if rec else ""
-        if rec and is_pid_running(rec.get("pid", -1)):
-            status_var.set(f"Watcher: {run_txt} (PID {rec['pid']}) · {root_disp or 'set watch root'} · {auto_txt}")
+        run_txt = "running" if running else "stopped"
+        if running:
+            status_var.set(f"Watcher: {run_txt} (PID {pid}) · {root_disp or 'set watch root'} · {auto_txt}")
         else:
             status_var.set(f"Watcher: {run_txt} · {auto_txt}")
-        if start_stop_btn:
-            start_stop_btn.config(
-                text="■ Stop Watcher" if running else "▶ Start Watcher",
-                bootstyle=DANGER if running else SUCCESS,
+        if start_stop_btn and not action_inflight.is_set():
+            _set_start_stop_btn(
+                text="Stop Watcher" if running else "Start Watcher",
+                style=DANGER if running else SUCCESS,
+                disabled=False,
             )
         health_var.set(compute_health_message())
-    def start_watcher():
+    def _finish_action():
+        action_inflight.clear()
+        _set_start_stop_btn(
+            text="Stop Watcher" if running_var.get() else "Start Watcher",
+            style=DANGER if running_var.get() else SUCCESS,
+            disabled=False,
+        )
+        update_status()
+
+    def _run_action(label: str, style, fn, *args):
+        if action_inflight.is_set():
+            return
+        action_inflight.set()
+        _set_start_stop_btn(label, style, disabled=True)
+
+        def _runner():
+            try:
+                fn(*args)
+            finally:
+                root.after(0, _finish_action)
+
+        threading.Thread(target=_runner, daemon=True).start()
+
+    def _start_watcher_worker(root_dir: str, cfg_new: dict, notify_on: bool, background_on: bool):
         rec = read_pidfile()
         if rec and is_pid_running(rec.get("pid", -1)):
-            # messagebox.showinfo("Watcher", f"Already running (PID {rec['pid']})."); update_status(); return
-            send_notification("Organizer", f"Already running (PID {rec['pid']})."); update_status(); return
+            send_notification("Organizer", f"Already running (PID {rec['pid']}).")
+            return
 
-        root_dir = watch_var.get().strip()
-        if not root_dir:
-            messagebox.showwarning("Watcher", "Set Watch root first."); return
-
-        # Persist config first so organizer reads latest
-        cfg_new = gather_config()
         try:
             save_config_atomic(cfg_path, cfg_new)
         except Exception as e:
-            messagebox.showerror("Error", f"Save failed: {e}"); return
+            root.after(0, lambda: messagebox.showerror("Error", f"Save failed: {e}"))
+            return
 
-        exe = pythonw_exe() if background_var.get() else sys.executable
+        exe = pythonw_exe() if background_on else sys.executable
         flags = 0
-        if exe == sys.executable and background_var.get():
+        if exe == sys.executable and background_on:
             flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
 
         cmd = [exe, "-m", "organizer.watcher", "--watch", root_dir]
-        if bool(notify_var.get()): cmd.append("--notify")
+        if notify_on:
+            cmd.append("--notify")
         try:
-            out = subprocess.DEVNULL if background_var.get() else None
-            err = subprocess.DEVNULL if background_var.get() else None
+            out = subprocess.DEVNULL if background_on else None
+            err = subprocess.DEVNULL if background_on else None
             proc = subprocess.Popen(cmd, creationflags=flags, stdout=out, stderr=err, close_fds=True)
             write_pidfile(proc.pid, root_dir)
             send_notification("Organizer", f"Started (PID {proc.pid}).")
-            # messagebox.showinfo("Watcher", f"Started (PID {proc.pid}).")
         except Exception as e:
-            messagebox.showerror("Watcher", f"Failed to start: {e}")
-        finally:
-            update_status()
+            root.after(0, lambda: messagebox.showerror("Watcher", f"Failed to start: {e}"))
 
-    def stop_watcher():
+    def _stop_watcher_worker():
         rec = read_pidfile()
         if not rec:
-            send_notification("Organizer", "Not running"); update_status(); return
-            # messagebox.showinfo("Watcher", "Not running (no PID file)."); update_status(); return
-            
+            send_notification("Organizer", "Not running")
+            return
+
         pid = int(rec.get("pid", -1))
         if pid < 0 or not is_pid_running(pid):
             remove_pidfile()
-            send_notification("Organizer", "Not running"); update_status(); return
-            # messagebox.showinfo("Watcher", "Not running."); update_status(); return
+            send_notification("Organizer", "Not running")
+            return
         try:
             subprocess.run(["taskkill", "/PID", str(pid), "/T"], check=False, capture_output=True)
             if is_pid_running(pid):
                 subprocess.run(["taskkill", "/F", "/PID", str(pid), "/T"], check=False, capture_output=True)
             if not is_pid_running(pid):
                 remove_pidfile()
-                # messagebox.showinfo("Watcher", "Stopped.")
                 send_notification("Organizer", "Stopped")
             else:
                 send_notification("Watcher", "Failed to stop watcher.")
         except Exception as e:
             send_notification("Watcher", f"Failed to stop: {e}")
-        finally:
-            update_status()
+
+    def start_watcher():
+        root_dir = watch_var.get().strip()
+        if not root_dir:
+            messagebox.showwarning("Watcher", "Set Watch root first.")
+            return
+        cfg_new = gather_config()
+        notify_on = bool(notify_var.get())
+        background_on = bool(background_var.get())
+        _run_action("Starting...", SUCCESS, _start_watcher_worker, root_dir, cfg_new, notify_on, background_on)
+
+    def stop_watcher():
+        _run_action("Stopping...", DANGER, _stop_watcher_worker)
 
     def start_stop_toggle():
         if running_var.get():
@@ -896,13 +931,19 @@ def main():
             start_watcher()
 
     def restart_watcher():
-        rec = read_pidfile()
-        running = bool(rec and is_pid_running(rec.get("pid", -1)))
-        if running:
-            stop_watcher()
-            start_watcher()
-        else:
-            start_watcher()
+        root_dir = watch_var.get().strip()
+        if not root_dir:
+            messagebox.showwarning("Watcher", "Set Watch root first.")
+            return
+        cfg_new = gather_config()
+        notify_on = bool(notify_var.get())
+        background_on = bool(background_var.get())
+
+        def _restart():
+            _stop_watcher_worker()
+            _start_watcher_worker(root_dir, cfg_new, notify_on, background_on)
+
+        _run_action("Restarting...", PRIMARY, _restart)
 
     def save_all():
         cfg_new = gather_config()
