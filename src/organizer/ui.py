@@ -1,4 +1,4 @@
-# ui.py  — scrollable UI, collapsible Recent Activity, background watcher with PID control
+# ui.py  - scrollable UI, collapsible Recent Activity, background watcher with PID control
 import os
 import sys
 import json
@@ -174,19 +174,40 @@ def main():
     watch_root_initial = raw.get("watch_root") or default_downloads
 
     # Window
-    root = tb.Window(themename="superhero")  # modern look like the screenshot
+    root = tb.Window(themename="minty")
     root.title("Organizer")
-    root.geometry("1000x700")
-    root.minsize(900, 640)
+    root.geometry("1300x760")
+    root.minsize(1100, 740)
+
+    status_var = tk.StringVar(master=root, value="Watcher: unknown")
 
     # thin scrollbars everywhere
-    style = ttk.Style()
+    style = root.style if hasattr(root, "style") else ttk.Style()
     style.configure("Thin.Vertical.TScrollbar", width=8)
-    # style.configure("Thin.Horizontal.TScrollbar", width=8)
 
+    # subtle accents + cards
+    style.configure("Hero.TFrame", background="#0b172a")
+    style.configure("HeroTitle.TLabel", background="#0b172a", foreground="#e2e8f0", font=("Segoe UI", 18, "bold"))
+    style.configure("HeroSubtitle.TLabel", background="#0b172a", foreground="#94a3b8", font=("Segoe UI", 10))
+    style.configure("Pill.TLabel", background="#e0f2fe", foreground="#0f172a", padding=(10, 4))
+    style.configure("Subtle.TLabel", foreground="#6b7280")
+    style.configure("SectionHeading.TLabel", font=("Segoe UI", 10, "bold"))
+    style.configure("Card.TLabelframe", padding=(14, 10))
+    style.configure("Card.TLabelframe.Label", font=("Segoe UI", 11, "bold"))
+
+    chrome = ttk.Frame(root, padding=(12, 10, 12, 12))
+    chrome.pack(fill="both", expand=True)
+
+    hero = ttk.Frame(chrome, padding=(16, 12), style="Hero.TFrame")
+    hero.pack(fill="x", pady=(0, 10))
+    hero.columnconfigure(0, weight=1)
+    ttk.Label(hero, text="Organizer", style="HeroTitle.TLabel").grid(row=0, column=0, sticky="w")
+    ttk.Label(hero, text="Keep downloads tidy with smart rules and a background watcher.", style="HeroSubtitle.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 0))
+    ttk.Label(hero, textvariable=status_var, style="Pill.TLabel").grid(row=0, column=1, rowspan=2, sticky="e")
+    ttk.Label(hero, text=f"Config: {cfg_path}", style="Subtle.TLabel").grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
 
     # ---- Scrollable container (Canvas + Frame) ----
-    outer = ttk.Frame(root)
+    outer = ttk.Frame(chrome)
     outer.pack(fill="both", expand=True)
 
     canvas = tk.Canvas(outer, highlightthickness=0)
@@ -199,6 +220,8 @@ def main():
     content = ttk.Frame(canvas)
     content.columnconfigure(0, weight=3)   # left (Notebook)
     content.columnconfigure(1, weight=2)   # right (Actions)
+    content.rowconfigure(1, weight=1)
+    content.rowconfigure(3, weight=1)
 
     content_id = canvas.create_window((0, 0), window=content, anchor="nw")
     _hide_after_id = None
@@ -236,18 +259,18 @@ def main():
     canvas.bind_all("<MouseWheel>", lambda e: (_show_scrollbar(), canvas.yview_scroll(int(-e.delta/120), "units")))
     
     # ----- Header -----
-    header = ttk.Frame(content)
-    header.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 6))
+    header = ttk.Frame(content, padding=(6, 4))
+    header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 6))
     header.columnconfigure(1, weight=1)
 
-    ttk.Label(header, text=f"Config: {cfg_path}", font=("Segoe UI", 10)).grid(row=0, column=0, sticky="w", columnspan=3)
-    ttk.Label(header, text="Watch root:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+    ttk.Label(header, text="Watch Root", style="SectionHeading.TLabel").grid(row=0, column=0, sticky="w")
     watch_var = tk.StringVar(master=root, value=watch_root_initial)
     wr_entry = ttk.Entry(header, textvariable=watch_var)
-    wr_entry.grid(row=1, column=1, sticky="ew", padx=(6, 6), pady=(6, 0))
-    ttk.Button(header, text="Browse…",
+    wr_entry.grid(row=0, column=1, sticky="ew", padx=(10, 6))
+    ttk.Button(header, text="Browse...",
                command=lambda: watch_var.set(filedialog.askdirectory(title="Select folder to watch") or watch_var.get())
-               ).grid(row=1, column=2, sticky="e", pady=(6, 0))
+               ).grid(row=0, column=2, sticky="e")
+    ttk.Label(header, text="Choose the folder to monitor for new files.", style="Subtle.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
     links = ttk.Frame(header)
     links.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
@@ -266,19 +289,8 @@ def main():
     left_nb.add(dest_tab, text="Destinations")
     left_nb.add(rules_tab, text="Rules")
 
-    dest_frame = ttk.Labelframe(dest_tab, text="Destinations")
-    dest_frame.pack(fill="both", expand=True, padx=8, pady=8)
-    dest_frame.columnconfigure(0, weight=1)
-    dest_frame.rowconfigure(0, weight=1)
-    
-    dest_cols = ("category", "folder")
-    dest_tree = ttk.Treeview(dest_frame, columns=dest_cols, show="headings", height=8, bootstyle=INFO)
-    dest_tree.heading("category", text="Category")
-    dest_tree.heading("folder", text="Folder")
-    dest_tree.column("category", width=180, stretch=True, anchor="w")
-    dest_tree.column("folder", width=500, stretch=True, anchor="w")
-
-
+    dest_frame = ttk.Labelframe(dest_tab, text="Destinations", style="Card.TLabelframe")
+    dest_frame.pack(fill="both", expand=True, padx=10, pady=10)
     dest_frame.columnconfigure(0, weight=1)
     dest_frame.rowconfigure(0, weight=1)
 
@@ -290,7 +302,7 @@ def main():
     for c, w in (("category", 240), ("folder", 680)):
         dest_tree.heading(c, text=c.capitalize()); dest_tree.column(c, width=w, anchor="w")
     dest_tree.grid(row=0, column=0, columnspan=6, sticky="nsew", padx=8, pady=8)
-    ttk.Style().configure("Treeview", rowheight=26)
+    style.configure("Treeview", rowheight=26)
     yscroll_dest = ttk.Scrollbar(dest_frame, orient="vertical", command=dest_tree.yview, style="Thin.Vertical.TScrollbar")
     dest_tree.configure(yscrollcommand=yscroll_dest.set)
     yscroll_dest.grid(row=0, column=6, sticky="ns")
@@ -356,15 +368,15 @@ def main():
     for btn in (
         ttk.Button(dest_toolbar, text="Add", command=dest_add, bootstyle=SUCCESS),
         ttk.Button(dest_toolbar, text="Rename", command=dest_rename),
-        ttk.Button(dest_toolbar, text="Browse…", command=dest_browse),
+        ttk.Button(dest_toolbar, text="Browse...", command=dest_browse),
         ttk.Button(dest_toolbar, text="Remove", command=dest_remove, bootstyle=DANGER),
         ttk.Button(dest_toolbar, text="Open", command=dest_open),
     ):
         btn.pack(side="left", padx=4)
 
     # ----- Rules -----
-    rules_frame = ttk.Labelframe(rules_tab, text="Rules (first match wins)")
-    rules_frame.pack(fill="both", expand=True, padx=8, pady=8)
+    rules_frame = ttk.Labelframe(rules_tab, text="Rules (first match wins)", style="Card.TLabelframe")
+    rules_frame.pack(fill="both", expand=True, padx=10, pady=10)
     rules_frame.columnconfigure(0, weight=1)
     rules_frame.rowconfigure(0, weight=1)
 
@@ -473,8 +485,8 @@ def main():
     toggle_row = ttk.Frame(content)
     toggle_row.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(0,4))
 
-    jrnl_container = ttk.Labelframe(content, text="Recent Activity (journal)")
-    jrnl_container.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=12, pady=(0,8))
+    jrnl_container = ttk.Labelframe(content, text="Recent Activity (journal)", style="Card.TLabelframe")
+    jrnl_container.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=12, pady=(0,8))
     jrnl_container.columnconfigure(0, weight=1)
     jrnl_container.rowconfigure(0, weight=1)
 
@@ -521,11 +533,11 @@ def main():
         body = []
         if op: body.append(op)
         if src and dest:
-            body.append(f"{src} → {dest}")
+            body.append(f"{src} -> {dest}")
         elif src:
             body.append(src)
         if cat: body.append(f"({cat})")
-        if reason: body.append(f"— {reason}")
+        if reason: body.append(f"- {reason}")
         parts.append((" ".join(body) + "\n", ""))
         return parts
 
@@ -562,20 +574,20 @@ def main():
     refresh_journal()              # schedule timer
 
     # --- Right column: Actions & Settings ---
-    right = ttk.Labelframe(content, text="Actions")
+    right = ttk.Labelframe(content, text="Actions", style="Card.TLabelframe")
     right.grid(row=1, column=1, sticky="nsew", padx=(0,12), pady=8)
     right.columnconfigure(0, weight=1)
+    right.rowconfigure(4, weight=1)  # spacer to keep buttons anchored lower
 
-    # status
-    status_var = tk.StringVar(value="Watcher: unknown")
-    ttk.Label(right, textvariable=status_var, wraplength=260).grid(row=0, column=0, sticky="w", padx=8, pady=(8,6))
+    ttk.Label(right, text="Watcher & notifications", style="SectionHeading.TLabel").grid(row=0, column=0, sticky="w", padx=8, pady=(6,2))
+    ttk.Label(right, textvariable=status_var, wraplength=260).grid(row=1, column=0, sticky="w", padx=8, pady=(0,6))
 
     # toggles
     background_var = tk.BooleanVar(master=root, value=True)
-    ttk.Checkbutton(right, text="Run in background", variable=background_var).grid(row=1, column=0, sticky="w", padx=8)
+    ttk.Checkbutton(right, text="Run in background", variable=background_var).grid(row=2, column=0, sticky="w", padx=8)
 
     notify_var = tk.BooleanVar(value=bool(raw.get("notify", False)))
-    ttk.Checkbutton(right, text="Notifications", variable=notify_var).grid(row=2, column=0, sticky="w", padx=8)
+    ttk.Checkbutton(right, text="Notifications", variable=notify_var).grid(row=3, column=0, sticky="w", padx=8)
 
     # Settings dialog: notifications + autostart
     def open_settings():
@@ -670,14 +682,14 @@ def main():
         run_txt = "running" if rec and is_pid_running(rec.get("pid", -1)) else "stopped"
         auto_txt = "autostart:on" if is_autostart_enabled() else "autostart:off"
         if rec and is_pid_running(rec.get("pid", -1)):
-            status_var.set(f"Watcher: {run_txt} (PID {rec['pid']}) — {rec.get('watch_root', '')} — {auto_txt}")
+            status_var.set(f"Watcher: {run_txt} (PID {rec['pid']}) - {rec.get('watch_root', '')} - {auto_txt}")
         else:
-            status_var.set(f"Watcher: {run_txt} — {auto_txt}")
+            status_var.set(f"Watcher: {run_txt} - {auto_txt}")
     def start_watcher():
         rec = read_pidfile()
         if rec and is_pid_running(rec.get("pid", -1)):
             # messagebox.showinfo("Watcher", f"Already running (PID {rec['pid']})."); update_status(); return
-            send_notification("Organizer 🦸", f"Already running (PID {rec['pid']})."); update_status(); return
+            send_notification("Organizer", f"Already running (PID {rec['pid']})."); update_status(); return
 
         root_dir = watch_var.get().strip()
         if not root_dir:
@@ -702,7 +714,7 @@ def main():
             err = subprocess.DEVNULL if background_var.get() else None
             proc = subprocess.Popen(cmd, creationflags=flags, stdout=out, stderr=err, close_fds=True)
             write_pidfile(proc.pid, root_dir)
-            send_notification("Organizer 🦸", f"Started (PID {proc.pid}).")
+            send_notification("Organizer", f"Started (PID {proc.pid}).")
             # messagebox.showinfo("Watcher", f"Started (PID {proc.pid}).")
         except Exception as e:
             messagebox.showerror("Watcher", f"Failed to start: {e}")
@@ -712,13 +724,13 @@ def main():
     def stop_watcher():
         rec = read_pidfile()
         if not rec:
-            send_notification("Organizer 🦸", "Not running"); update_status(); return
+            send_notification("Organizer", "Not running"); update_status(); return
             # messagebox.showinfo("Watcher", "Not running (no PID file)."); update_status(); return
             
         pid = int(rec.get("pid", -1))
         if pid < 0 or not is_pid_running(pid):
             remove_pidfile()
-            send_notification("Organizer 🦸", "Not running"); update_status(); return
+            send_notification("Organizer", "Not running"); update_status(); return
             # messagebox.showinfo("Watcher", "Not running."); update_status(); return
         try:
             subprocess.run(["taskkill", "/PID", str(pid), "/T"], check=False, capture_output=True)
@@ -727,7 +739,7 @@ def main():
             if not is_pid_running(pid):
                 remove_pidfile()
                 # messagebox.showinfo("Watcher", "Stopped.")
-                send_notification("Organizer 🦸", "Stopped")
+                send_notification("Organizer", "Stopped")
             else:
                 messagebox.showwarning("Watcher", "Failed to stop watcher.")
         except Exception as e:
@@ -758,7 +770,7 @@ def main():
                 restart_watcher()
             else:
                 # messagebox.showinfo("Watcher", "Changes will apply on next restart.")
-                send_notification("Organizer 🦸", "Changes will apply on next restart.")
+                send_notification("Organizer", "Changes will apply on next restart.")
         else:
             # messagebox.showinfo("Saved", "Configuration saved.")
             send_notification("Saved", "Configuration saved.")
@@ -766,7 +778,7 @@ def main():
 
     # buttons
     btns = ttk.Frame(right)
-    btns.grid(row=3, column=0, sticky="ew", padx=8, pady=8)
+    btns.grid(row=5, column=0, sticky="ew", padx=8, pady=8)
     btns.columnconfigure(0, weight=1)
     for text, cmd, style in [
         ("Start Watcher", start_watcher, SUCCESS),
