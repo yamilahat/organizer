@@ -20,19 +20,6 @@ def _rate_ok(now: float) -> bool:
     _last_toasts = [t for t in _last_toasts if now - t < _TOAST_WINDOW]
     return len(_last_toasts) < _TOAST_LIMIT
 
-# -------------------- Explorer opener --------------------
-def _open_in_explorer_select(path: str) -> None:
-    """Open Explorer selecting the file (or the folder if not a file)."""
-    try:
-        abspath = os.path.abspath(path)
-        if os.path.isfile(abspath):
-            # explorer.exe /select,"C:\path\file.ext"
-            subprocess.Popen(["explorer.exe", "/select,", abspath])
-        else:
-            subprocess.Popen(["explorer.exe", abspath])
-    except Exception:
-        pass
-
 # -------------------- resource helpers --------------------
 def resource_path(rel: str) -> str:
     """Resolve resource path (dev + PyInstaller)."""
@@ -45,7 +32,6 @@ def bundled_icon() -> Optional[str]:
     return str(p) if p.exists() else None
 
 def _user_icon() -> Optional[str]:
-    """Optional user override: %LOCALAPPDATA%\Organizer\icon.png"""
     p = Path(os.environ.get("LOCALAPPDATA", ".")) / "Organizer" / "icon.png"
     return str(p) if p.exists() else None
 
@@ -73,13 +59,14 @@ def send_notification(title: str, body: str, enable: bool = True, path: str | No
 
     def _fire():
         try:
-            # If you later trust on_click, uncomment the line below and pass:
-            # on_click=lambda: _open_in_explorer_select(path) if path else None
+            on_click=lambda: _open_in_explorer_select(path) if path else None
             _toast(
                 title,
                 body,
                 duration="short",
-                icon=icon
+                icon=icon,
+                # on_click=on_click
+                on_click=str(Path(path).parent)
             )
         except Exception:
             pass
