@@ -3,6 +3,7 @@ from __future__ import annotations
 import os, sys, subprocess, threading
 from pathlib import Path
 from typing import Optional
+from collections import deque
 
 try:
     from win11toast import toast as _toast
@@ -13,6 +14,12 @@ except Exception:
 _last_toasts: list[float] = []
 _TOAST_LIMIT = 5        # max 5
 _TOAST_WINDOW = 10.0    # per 10 seconds
+
+# -------------------- move aggregator --------------------
+_pending_moves: deque[tuple[str, str]] = deque()  # (src, dest)
+_flush_timer: threading.Timer | None = None
+_AGGREGATE_WINDOW = 1.2  # seconds
+_pending_lock = threading.Lock()
 
 def _rate_ok(now: float) -> bool:
     from time import monotonic
@@ -83,3 +90,40 @@ def send_notification(title: str, body: str, enable: bool = True, path: str | No
             pass
 
     threading.Thread(target=_fire, daemon=True).start()
+
+
+def send_move_notice(src: str, dest: str, enable: bool = True) -> None:
+    """
+    Aggregate move notifications to avoid toast spam.
+    Flushes after a short window; click opens the first destination folder.
+    """
+    if not enable:
+        return
+    with _pending_lock:
+        _pending_moves.append((src, dest))
+        global _flush_timer
+        if _flush_timer is None:
+            _flush_timer = threading.Timer(_AGGREGATE_WINDOW, _flush_moves, kwargs={"enable": enable})
+            _flush_timer.daemon = True
+            _flush_timer.start()
+
+
+def _flush_moves(enable: bool = True) -> None:
+    global _flush_timer
+    with _pending_lock:
+        batch = list(_pending_moves)
+        _pending_moves.clear()
+        _flush_timer = None
+    if not batch:
+        return
+    if len(batch) == 1:
+        src, dest = batch[0]
+        send_notification("Organizer", f"Moved {Path(src).name} to {dest}", enable=enable, path=dest)
+        return
+    count = len(batch)
+    names = [Path(item[0]).name for item in batch[:3]]
+    if count > 3:
+        names.append("...")
+    summary = ", ".join(names)
+    first_dest = batch[0][1]
+    send_notification("Organizer", f"Moved {count} files \u00b7 {summary}", enable=enable, path=first_dest)

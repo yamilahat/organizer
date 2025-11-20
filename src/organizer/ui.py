@@ -6,13 +6,14 @@ import webbrowser
 import subprocess
 import threading
 import tkinter as tk
+import shutil
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from datetime import datetime
 
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 
-from organizer.watcher import load_config, JOURNAL_PATH  # reuse existing helpers
+from organizer.watcher import load_config, JOURNAL_PATH, MIN_FREE_MB  # reuse existing helpers
 from organizer.notifications import send_notification
 from pathlib import Path
 
@@ -206,6 +207,7 @@ def main():
 
     status_var = tk.StringVar(master=root, value="Watcher: unknown")
     running_var = tk.BooleanVar(master=root, value=False)
+    health_var = tk.StringVar(master=root, value="")
 
     # thin scrollbars everywhere
     style = root.style if hasattr(root, "style") else ttk.Style()
@@ -220,6 +222,9 @@ def main():
     style.configure("SectionHeading.TLabel", font=("Segoe UI", 10, "bold"))
     style.configure("Card.TLabelframe", padding=(14, 10))
     style.configure("Card.TLabelframe.Label", font=("Segoe UI", 11, "bold"))
+    style.configure("Emphasis.TButton", padding=(10, 8))
+    style.configure("Warning.TLabel", foreground="#b45309", wraplength=260)
+    style.configure("Muted.TLabel", foreground="#4b5563")
 
     chrome = ttk.Frame(root, padding=(12, 10, 12, 12))
     chrome.pack(fill="both", expand=True)
@@ -662,14 +667,16 @@ def main():
     right.rowconfigure(4, weight=1)  # spacer to keep buttons anchored lower
 
     ttk.Label(right, text="Watcher & notifications", style="SectionHeading.TLabel").grid(row=0, column=0, sticky="w", padx=8, pady=(6,2))
-    ttk.Label(right, textvariable=status_var, wraplength=260).grid(row=1, column=0, sticky="w", padx=8, pady=(0,6))
+    ttk.Label(right, textvariable=status_var, wraplength=260).grid(row=1, column=0, sticky="w", padx=8, pady=(0,4))
+    health_label = ttk.Label(right, textvariable=health_var, style="Warning.TLabel")
+    health_label.grid(row=2, column=0, sticky="w", padx=8, pady=(0,8))
 
     # toggles
     background_var = tk.BooleanVar(master=root, value=True)
-    ttk.Checkbutton(right, text="Run in background", variable=background_var).grid(row=2, column=0, sticky="w", padx=8)
+    ttk.Checkbutton(right, text="Run in background", variable=background_var).grid(row=3, column=0, sticky="w", padx=8)
 
     notify_var = tk.BooleanVar(value=bool(raw.get("notify", False)))
-    ttk.Checkbutton(right, text="Notifications", variable=notify_var).grid(row=3, column=0, sticky="w", padx=8)
+    ttk.Checkbutton(right, text="Notifications", variable=notify_var).grid(row=4, column=0, sticky="w", padx=8)
 
     def gather_config() -> dict:
       dests = {}
@@ -779,21 +786,47 @@ def main():
 
 
     # PID-based control so UI restarts can still stop the watcher
+    def compute_health_message() -> str:
+        msgs: list[str] = []
+        root_dir = watch_var.get().strip()
+        if not root_dir or not os.path.isdir(root_dir):
+            msgs.append("Set a valid watch folder")
+        dests = current_dest_dirs()
+        missing = [k for k, v in dests.items() if not v or not os.path.isdir(v)]
+        if missing:
+            extra = "..." if len(missing) > 3 else ""
+            msgs.append(f"Destinations missing: {', '.join(missing[:3])}{extra}")
+        low_space = []
+        for k, v in dests.items():
+            if not v or not os.path.isdir(v):
+                continue
+            try:
+                free = shutil.disk_usage(v).free
+            except Exception:
+                continue
+            if free < MIN_FREE_MB * 1024**2:
+                low_space.append(k)
+        if low_space:
+            msgs.append(f"Low space: {', '.join(low_space)} (<{MIN_FREE_MB} MB)")
+        return " \u00b7 ".join(msgs)
+
     def update_status():
         rec = read_pidfile()
         run_txt = "running" if rec and is_pid_running(rec.get("pid", -1)) else "stopped"
         running = bool(rec and is_pid_running(rec.get("pid", -1)))
         running_var.set(running)
         auto_txt = "autostart:on" if is_autostart_enabled() else "autostart:off"
+        root_disp = Path(rec.get("watch_root", "")).name if rec else ""
         if rec and is_pid_running(rec.get("pid", -1)):
-            status_var.set(f"Watcher: {run_txt} (PID {rec['pid']}) - {rec.get('watch_root', '')} - {auto_txt}")
+            status_var.set(f"Watcher: {run_txt} (PID {rec['pid']}) · {root_disp or 'set watch root'} · {auto_txt}")
         else:
-            status_var.set(f"Watcher: {run_txt} - {auto_txt}")
+            status_var.set(f"Watcher: {run_txt} · {auto_txt}")
         if start_stop_btn:
             start_stop_btn.config(
-                text="Stop Watcher" if running else "Start Watcher",
+                text="■ Stop Watcher" if running else "▶ Start Watcher",
                 bootstyle=DANGER if running else SUCCESS,
             )
+        health_var.set(compute_health_message())
     def start_watcher():
         rec = read_pidfile()
         if rec and is_pid_running(rec.get("pid", -1)):
@@ -895,7 +928,7 @@ def main():
     btns = ttk.Frame(right)
     btns.grid(row=5, column=0, sticky="ew", padx=8, pady=8)
     btns.columnconfigure(0, weight=1)
-    start_stop_btn = ttk.Button(btns, text="Start Watcher", command=start_stop_toggle, bootstyle=SUCCESS)
+    start_stop_btn = ttk.Button(btns, text="▶ Start Watcher", command=start_stop_toggle, bootstyle=SUCCESS)
     start_stop_btn.pack(fill="x", pady=4)
 
     actions = [
@@ -905,6 +938,9 @@ def main():
     ]
     for text, cmd, style in actions:
         ttk.Button(btns, text=text, command=cmd, bootstyle=style).pack(fill="x", pady=4)
+
+    if pystray is None or Image is None:
+        ttk.Label(btns, text="Tray requires: pip install pystray Pillow", style="Muted.TLabel", wraplength=260).pack(fill="x", pady=(6,0))
 
     # ttk.Button(bottom, text="Start Watcher", command=start_watcher, bootstyle=SUCCESS).pack(side="right")
     # ttk.Button(bottom, text="Stop Watcher", command=stop_watcher, bootstyle=DANGER).pack(side="right", padx=6)

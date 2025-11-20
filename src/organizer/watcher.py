@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timezone
 import json, atexit
 from organizer.planner import decide_action, TEMP_SUFFIXES
-from organizer.notifications import send_notification
+from organizer.notifications import send_notification, send_move_notice
 from pathlib import Path
 import shutil
 
@@ -286,11 +286,11 @@ def exec_worker(dry_run: bool, notify: bool):
             if ok:
                 logger.success(f"executed: {src} -> {abs_dest}")
                 journal("executed", src=src, dest=abs_dest, op="move", reason="ok")
-                send_notification("Organizer 🦸", f"Moved {os.path.basename(src)} to {abs_dest}", enable=notify, path=abs_dest)
+                send_move_notice(src, abs_dest, enable=notify)
             else:
                 logger.error(f"failed: {src} -> {abs_dest}")
                 journal("failed", src=src, dest=abs_dest, op="move", reason="executed_failed")
-                send_notification("Organizer 🦸👎", f"Failed to move {os.path.basename(src)}", enable=notify, path=src)
+                send_notification("Organizer - Move failed", f"Failed to move {os.path.basename(src)}", enable=notify, path=src)
         finally:
             exec_q.task_done()
 
