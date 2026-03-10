@@ -1,6 +1,6 @@
 # notifications.py
 from __future__ import annotations
-import os, sys, subprocess, threading
+import os, sys, threading
 from pathlib import Path
 from typing import Optional
 from collections import deque
@@ -22,7 +22,6 @@ _AGGREGATE_WINDOW = 1.2  # seconds
 _pending_lock = threading.Lock()
 
 def _rate_ok(now: float) -> bool:
-    from time import monotonic
     global _last_toasts
     _last_toasts = [t for t in _last_toasts if now - t < _TOAST_WINDOW]
     return len(_last_toasts) < _TOAST_LIMIT

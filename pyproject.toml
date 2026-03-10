@@ -16,6 +16,14 @@ dependencies = [
   "Pillow",
 ]
 
+[project.optional-dependencies]
+build = [
+  "pyinstaller>=6.0",
+]
+
+[project.scripts]
+organizer = "organizer.launcher:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

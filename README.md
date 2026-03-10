@@ -1,4 +1,4 @@
-﻿# organizer
+# organizer
 
 Windows downloads organizer with a rule-based watcher plus a tkinter UI.
 
@@ -9,10 +9,11 @@ Windows downloads organizer with a rule-based watcher plus a tkinter UI.
 - ttkbootstrap UI to edit destinations and rules, start/stop the watcher, toggle background + notifications, and view the journal
 - Optional Windows toast notifications and autostart via the Startup folder
 - NDJSON journal for every planned/skip/execute event to help debug
+- Packaged executable support through `Organizer.exe`, including startup mode from saved config
 
 ## Requirements
 
-- Windows (watcher, autostart, and toasts are Windows-only)
+- Windows (watcher, autostart, toasts, and packaged startup flow are Windows-only)
 - Python 3.12+
 - `watchdog`, `loguru`, `ttkbootstrap`, `win11toast` (installed via pip)
 
@@ -30,6 +31,12 @@ pip install -e .
 python -m organizer.ui
 ```
 
+Or through the shared launcher:
+
+```powershell
+organizer
+```
+
 - Pick a watch root (defaults to Downloads on first run)
 - Add destination folders for categories (archives/installers/docs/images/custom)
 - Add rules (glob patterns or space-separated extensions); first match wins
@@ -42,11 +49,41 @@ python -m organizer.ui
 python -m organizer.watcher --watch "C:\Users\you\Downloads" --notify --verbose
 ```
 
+Or via the launcher using saved config:
+
+```powershell
+organizer --startup
+```
+
 Flags: `--dry-run`, `--notify`, `--verbose`. Uses `%LOCALAPPDATA%\Organizer\config.json`; PID lives at `%LOCALAPPDATA%\Organizer\watcher.pid`.
+
+## Build the executable
+
+Install the build extra, then run the build script:
+
+```powershell
+pip install -e .[build]
+.\scripts\build_exe.ps1
+```
+
+The packaged app is written to `dist\Organizer.exe`.
+
+- Running `Organizer.exe` opens the UI.
+- Running `Organizer.exe --startup` starts the watcher using the saved `watch_root` and `notify` values from `%LOCALAPPDATA%\Organizer\config.json`.
+
+## Install startup from the executable
+
+After building the executable:
+
+```powershell
+.\scripts\install_startup.ps1
+```
+
+That creates `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\OrganizerWatcher.cmd`, which launches `Organizer.exe --startup` automatically at sign-in.
 
 ## Configuration
 
-- First run writes `%LOCALAPPDATA%\Organizer\config.json` with sample destinations pointing at the `demo/` folders in this repo update them to your own paths via the UI
+- First run writes `%LOCALAPPDATA%\Organizer\config.json` with sample destinations pointing at the `demo/` folders in this repo; update them to your own paths via the UI
 - Keys: `watch_root`, `dest_dirs` (category -> folder), `rules` (list of `{type: glob|ext, pattern|exts, category, enabled}`), `notify`
 - Journal: `%LOCALAPPDATA%\Organizer\journal.ndjson`. Autostart script + icon are stored under `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup` and `%LOCALAPPDATA%\Organizer`.
 
